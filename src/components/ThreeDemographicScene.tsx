@@ -11,6 +11,7 @@ interface ThreeDemographicSceneProps {
   isAutoRotate: boolean;
   viewMode: 'overview' | 'comparison' | 'closeUp';
   cameraTrigger?: number;
+  isPaused?: boolean;
 }
 
 // Module-scope scratch math objects for zero garbage collection in render loop
@@ -27,6 +28,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
   isAutoRotate,
   viewMode,
   cameraTrigger = 0,
+  isPaused = false,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -37,22 +39,26 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
   const hoveredIndexRef = useRef<number>(-1);
   const isSoftwareGlRef = useRef<boolean>(false);
   const isTransitioningCameraRef = useRef<boolean>(false);
+  const wakeLoopRef = useRef<(frames?: number) => void>(() => {});
 
   // Keep references to props for animation loop without recreating listeners
-  const propsRef = useRef({ names, selectedIndex, isAutoRotate, viewMode, onSelectName });
+  const propsRef = useRef({ names, selectedIndex, isAutoRotate, viewMode, onSelectName, isPaused });
   useEffect(() => {
-    propsRef.current = { names, selectedIndex, isAutoRotate, viewMode, onSelectName };
-  }, [names, selectedIndex, isAutoRotate, viewMode, onSelectName]);
+    propsRef.current = { names, selectedIndex, isAutoRotate, viewMode, onSelectName, isPaused };
+    wakeLoopRef.current(45);
+  }, [names, selectedIndex, isAutoRotate, viewMode, onSelectName, isPaused]);
 
   // Trigger smooth camera glide ONLY when user explicitly changes viewMode, cameraTrigger, or selects a pillar in closeUp mode
   useEffect(() => {
     isTransitioningCameraRef.current = true;
+    wakeLoopRef.current(60);
   }, [viewMode, cameraTrigger]);
 
   useEffect(() => {
     if (viewMode === 'closeUp') {
       isTransitioningCameraRef.current = true;
     }
+    wakeLoopRef.current(45);
   }, [selectedIndex, viewMode]);
 
   useEffect(() => {
@@ -71,18 +77,18 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     })();
     isSoftwareGlRef.current = isSoftwareGl;
 
-    // 2. Renderer setup with ACESFilmic & sRGB
+    // 2. Renderer setup with downscaled pixelRatio on high-DPI displays to prevent MacBook thermal stress
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
     const renderer = new THREE.WebGLRenderer({
       antialias: !isSoftwareGl,
-      powerPreference: 'high-performance',
-      preserveDrawingBuffer: true,
+      powerPreference: 'default',
+      preserveDrawingBuffer: false,
       alpha: false,
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.25));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.25;
@@ -91,6 +97,12 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
 
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
+
+    // Cache bounding rect to avoid layout thrashing in pointermove
+    let cachedRect = renderer.domElement.getBoundingClientRect();
+    let lastCursor = 'default';
+    let isDraggingCamera = false;
+    let lastRaycastTime = 0;
 
     // 3. Scene & Studio PBR Environment
     const scene = new THREE.Scene();
@@ -109,7 +121,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = !isSoftwareGl;
-    controls.dampingFactor = 0.05;
+    controls.dampingFactor = 0.06;
     controls.enablePan = true;
     controls.screenSpacePanning = true;
     controls.panSpeed = 1.0;
@@ -118,20 +130,16 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     controls.maxDistance = 85;
     controls.target.set(0, 4.5, 0);
 
-    // Immediately cancel any scripted camera glide as soon as the user pans, orbits, or zooms
-    controls.addEventListener('start', () => {
-      isTransitioningCameraRef.current = false;
-    });
     controlsRef.current = controls;
 
     // 5. Studio 3-Point Lighting Rig
-    // Warm key light
+    // Warm key light (1024x1024 shadow map to reduce GPU fill-rate load)
     const keyLight = new THREE.DirectionalLight(0xfff3e0, 2.8);
     keyLight.position.set(15, 25, 20);
     if (!isSoftwareGl) {
       keyLight.castShadow = true;
-      keyLight.shadow.mapSize.width = 2048;
-      keyLight.shadow.mapSize.height = 2048;
+      keyLight.shadow.mapSize.width = 1024;
+      keyLight.shadow.mapSize.height = 1024;
       keyLight.shadow.camera.near = 5;
       keyLight.shadow.camera.far = 70;
       keyLight.shadow.camera.left = -25;
@@ -200,7 +208,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     floorTexture.wrapT = THREE.RepeatWrapping;
     floorTexture.repeat.set(8, 8);
     floorTexture.colorSpace = THREE.SRGBColorSpace;
-    floorTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    floorTexture.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
 
     const floorGeo = new THREE.PlaneGeometry(160, 160);
     const floorMat = new THREE.MeshStandardMaterial({
@@ -235,7 +243,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     scene.add(floorGroup);
 
     // Ambient floating particles (data dust)
-    const particleCount = 120;
+    const particleCount = 90;
     const particleGeo = new THREE.BufferGeometry();
     const particlePositions = new Float32Array(particleCount * 3);
     for (let i = 0; i < particleCount; i++) {
@@ -254,28 +262,78 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     const particleSystem = new THREE.Points(particleGeo, particleMat);
     scene.add(particleSystem);
 
-    // 7. Raycasting for hover & click
+    // 7. Throttled Render Loop State (30 FPS cap + idle sleep)
+    let frameId = 0;
+    let isLoopRunning = false;
+    let activeFramesRemaining = 45;
+    let lastFrameTime = 0;
+    const fpsLimit = 30;
+    const frameInterval = 1000 / fpsLimit;
+    const clock = new THREE.Clock();
+
+    const wakeRenderLoop = (frames = 35) => {
+      activeFramesRemaining = Math.max(activeFramesRemaining, frames);
+      if (!isLoopRunning && !document.hidden && !propsRef.current.isPaused) {
+        isLoopRunning = true;
+        clock.getDelta();
+        frameId = requestAnimationFrame(tick);
+      }
+    };
+    wakeLoopRef.current = wakeRenderLoop;
+
+    // Immediately cancel any scripted camera glide as soon as the user pans, orbits, or zooms
+    controls.addEventListener('start', () => {
+      isTransitioningCameraRef.current = false;
+      isDraggingCamera = true;
+      wakeRenderLoop(45);
+    });
+    controls.addEventListener('change', () => {
+      wakeRenderLoop(25);
+    });
+    controls.addEventListener('end', () => {
+      isDraggingCamera = false;
+      wakeRenderLoop(30);
+    });
+
+    // 8. Raycasting for hover & click (throttled & zero layout thrashing)
+    const setCursorIfChanged = (nextCursor: string) => {
+      if (lastCursor !== nextCursor) {
+        lastCursor = nextCursor;
+        container.style.cursor = nextCursor;
+      }
+    };
+
     const handlePointerMove = (e: MouseEvent) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      _mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      _mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      if (isDraggingCamera || propsRef.current.isPaused) return;
+      const now = performance.now();
+      if (now - lastRaycastTime < 33) return; // Cap raycasting to 30Hz
+      lastRaycastTime = now;
+
+      if (cachedRect.width <= 0 || cachedRect.height <= 0) {
+        cachedRect = renderer.domElement.getBoundingClientRect();
+      }
+      _mouse.x = ((e.clientX - cachedRect.left) / cachedRect.width) * 2 - 1;
+      _mouse.y = -((e.clientY - cachedRect.top) / cachedRect.height) * 2 + 1;
 
       _raycaster.setFromCamera(_mouse, camera);
       const intersects = _raycaster.intersectObjects(monolithGroupsRef.current, true);
 
+      let nextHovered = -1;
       if (intersects.length > 0) {
         let parent = intersects[0].object.parent;
         while (parent && !(parent.userData && parent.userData.monolithIndex !== undefined)) {
           parent = parent.parent;
         }
         if (parent && parent.userData.monolithIndex !== undefined) {
-          hoveredIndexRef.current = parent.userData.monolithIndex;
-          container.style.cursor = 'pointer';
-          return;
+          nextHovered = parent.userData.monolithIndex;
         }
       }
-      hoveredIndexRef.current = -1;
-      container.style.cursor = 'default';
+
+      if (nextHovered !== hoveredIndexRef.current) {
+        hoveredIndexRef.current = nextHovered;
+        setCursorIfChanged(nextHovered >= 0 ? 'pointer' : 'default');
+        wakeRenderLoop(25);
+      }
     };
 
     const handleClick = () => {
@@ -284,10 +342,10 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
       }
     };
 
-    window.addEventListener('pointermove', handlePointerMove);
+    renderer.domElement.addEventListener('pointermove', handlePointerMove, { passive: true });
     renderer.domElement.addEventListener('click', handleClick);
 
-    // 8. Resize Handler
+    // 9. Resize Handler
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -295,38 +353,33 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      cachedRect = renderer.domElement.getBoundingClientRect();
+      wakeRenderLoop(20);
     };
     window.addEventListener('resize', handleResize);
-
-    // 8. Animation & Pacing Loop
-    let frameId = 0;
-    let clock = new THREE.Clock();
-
-    function afterDraw(cb: () => void) {
-      const gl = renderer.getContext() as WebGL2RenderingContext;
-      const sync = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
-      gl.flush();
-      const poll = () => {
-        const state = sync && gl.getSyncParameter(sync, gl.SYNC_STATUS);
-        if (state === gl.UNSIGNALED) {
-          frameId = window.setTimeout(poll, 5);
-        } else {
-          if (sync) gl.deleteSync(sync);
-          frameId = window.setTimeout(cb, 80);
-        }
-      };
-      frameId = window.setTimeout(poll, 5);
-    }
 
     // Populate initial monoliths
     rebuildMonoliths(propsRef.current.names, scene);
 
-    function tick() {
+    function tick(timestamp = performance.now()) {
+      const currentProps = propsRef.current;
+
+      if (document.hidden || currentProps.isPaused) {
+        isLoopRunning = false;
+        return;
+      }
+
+      // Throttle 3D rendering to 30 FPS to reduce MacBook GPU/CPU thermal load
+      if (timestamp - lastFrameTime < frameInterval) {
+        frameId = requestAnimationFrame(tick);
+        return;
+      }
+      lastFrameTime = timestamp;
+
       const delta = Math.min(clock.getDelta(), 0.1);
       const time = clock.getElapsedTime();
 
       // Camera transitions based on viewMode & selected monolith
-      const currentProps = propsRef.current;
       const selectedMonolith = monolithGroupsRef.current[currentProps.selectedIndex];
 
       if (selectedMonolith && currentProps.viewMode === 'closeUp') {
@@ -353,6 +406,8 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
           camera.position.distanceToSquared(_targetCam) < 0.05
         ) {
           isTransitioningCameraRef.current = false;
+        } else {
+          activeFramesRemaining = Math.max(activeFramesRemaining, 10);
         }
       }
 
@@ -360,62 +415,81 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
       if (currentProps.isAutoRotate) {
         controls.autoRotate = true;
         controls.autoRotateSpeed = 1.0;
+        activeFramesRemaining = Math.max(activeFramesRemaining, 10);
       } else {
         controls.autoRotate = false;
       }
       controls.update();
 
       // GPU-friendly ambient floating motion (no buffer re-uploads to GPU)
-      particleSystem.rotation.y = time * 0.03;
-      particleSystem.position.y = Math.sin(time * 0.5) * 0.3;
+      if (currentProps.isAutoRotate) {
+        particleSystem.rotation.y = time * 0.03;
+        particleSystem.position.y = Math.sin(time * 0.5) * 0.3;
+      }
 
-      // Animate crystal beacons on monoliths
+      // Animate crystal beacons & selection scale on monoliths
+      let anyScaling = false;
       monolithGroupsRef.current.forEach((group, idx) => {
-        const crystal = group.userData.crystalMesh as THREE.Mesh;
-        if (crystal) {
-          crystal.rotation.y = time * 0.8 + idx * 0.5;
+        if (currentProps.isAutoRotate) {
+          const crystal = group.userData.crystalMesh as THREE.Mesh;
+          if (crystal) {
+            crystal.rotation.y = time * 0.8 + idx * 0.5;
+          }
         }
 
         // Highlight selected or hovered monolith
         const isSelected = idx === currentProps.selectedIndex;
         const isHovered = idx === hoveredIndexRef.current;
         const targetScale = isSelected ? 1.06 : isHovered ? 1.03 : 1.0;
-        group.scale.setScalar(THREE.MathUtils.damp(group.scale.x, targetScale, 6, delta));
+        const nextScale = THREE.MathUtils.damp(group.scale.x, targetScale, 8, delta);
+        if (Math.abs(nextScale - targetScale) > 0.001) {
+          anyScaling = true;
+        }
+        group.scale.setScalar(nextScale);
 
         const halo = group.userData.haloMesh as THREE.Mesh;
         if (halo) {
-          halo.rotation.z = -time * 0.5;
+          if (currentProps.isAutoRotate) {
+            halo.rotation.z = -time * 0.5;
+          }
           (halo.material as THREE.MeshBasicMaterial).opacity = isSelected ? 0.85 : 0.35;
         }
       });
 
+      if (anyScaling) {
+        activeFramesRemaining = Math.max(activeFramesRemaining, 5);
+      }
+
       renderer.render(scene, camera);
 
-      if (document.hidden) return;
-
-      if (isSoftwareGl) afterDraw(tick);
-      else frameId = requestAnimationFrame(tick);
+      activeFramesRemaining--;
+      if (activeFramesRemaining > 0 || currentProps.isAutoRotate || isTransitioningCameraRef.current || isDraggingCamera) {
+        frameId = requestAnimationFrame(tick);
+      } else {
+        // Scene is idle: sleep until next user interaction or prop update
+        isLoopRunning = false;
+      }
     }
 
     const handleVisibilityChange = () => {
-      if (!document.hidden) {
-        clock.getDelta(); // reset delta to prevent time jump
-        if (isSoftwareGl) afterDraw(tick);
-        else frameId = requestAnimationFrame(tick);
+      if (!document.hidden && !propsRef.current.isPaused) {
+        wakeRenderLoop(30);
       } else {
+        isLoopRunning = false;
         cancelAnimationFrame(frameId);
-        clearTimeout(frameId);
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    tick();
+    // Start initial render
+    isLoopRunning = true;
+    frameId = requestAnimationFrame(tick);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      isLoopRunning = false;
       cancelAnimationFrame(frameId);
-      clearTimeout(frameId);
-      window.removeEventListener('pointermove', handlePointerMove);
+      renderer.domElement.removeEventListener('pointermove', handlePointerMove);
       renderer.domElement.removeEventListener('click', handleClick);
       window.removeEventListener('resize', handleResize);
       controls.dispose();
@@ -461,6 +535,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     const scene = sceneRef.current;
     if (!scene) return;
     rebuildMonoliths(names, scene);
+    wakeLoopRef.current(35);
   }, [names]);
 
   return (

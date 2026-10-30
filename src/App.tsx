@@ -1,12 +1,21 @@
-import React, { useState, useMemo } from 'react';
-import { ThreeDemographicScene } from './components/ThreeDemographicScene';
+import React, { useState, useMemo, useEffect, Suspense, lazy } from 'react';
 import { ShinyHeader } from './components/ShinyHeader';
 import { ControlDock } from './components/ControlDock';
-import { DemographicDetailPanel } from './components/DemographicDetailPanel';
-import { SurvivalCurveModal } from './components/SurvivalCurveModal';
-import { CohortTopNamesModal } from './components/CohortTopNamesModal';
-import { MethodologyModal } from './components/MethodologyModal';
 import { computeNameStats, ComputedNameStats } from './data/demographics';
+
+// Lazy-load heavy 3D WebGL renderer and modal views to improve LCP and reduce initial main-thread compilation
+const ThreeDemographicScene = lazy(() =>
+  import('./components/ThreeDemographicScene').then((m) => ({ default: m.ThreeDemographicScene }))
+);
+const SurvivalCurveModal = lazy(() =>
+  import('./components/SurvivalCurveModal').then((m) => ({ default: m.SurvivalCurveModal }))
+);
+const CohortTopNamesModal = lazy(() =>
+  import('./components/CohortTopNamesModal').then((m) => ({ default: m.CohortTopNamesModal }))
+);
+const MethodologyModal = lazy(() =>
+  import('./components/MethodologyModal').then((m) => ({ default: m.MethodologyModal }))
+);
 
 export default function App() {
   // Authoritative Compared Names List
@@ -30,6 +39,13 @@ export default function App() {
   // Modals
   const [isMethodologyOpen, setIsMethodologyOpen] = useState(false);
   const [isTopNamesOpen, setIsTopNamesOpen] = useState(false);
+
+  // Defer WebGL scene initialization until after first UI paint to minimize LCP render delay
+  const [is3DReady, setIs3DReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setIs3DReady(true), 40);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // Compute Actuarial & Demographic Data for all compared names
   const computedStatsList: ComputedNameStats[] = useMemo(() => {
@@ -93,19 +109,24 @@ export default function App() {
     setSelectedIndex(0);
   };
 
-  const selectedStat = computedStatsList[selectedIndex] || computedStatsList[0];
+  const isAnyModalOpen = activeTab === 'curves' || isTopNamesOpen || isMethodologyOpen;
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0a0f1d] text-white">
-      {/* 1. Full-Bleed 3D Scene Viewport */}
-      <ThreeDemographicScene
-        names={computedStatsList}
-        selectedIndex={selectedIndex}
-        onSelectName={setSelectedIndex}
-        isAutoRotate={isAutoRotate}
-        viewMode={viewMode}
-        cameraTrigger={cameraTrigger}
-      />
+      {/* 1. Full-Bleed 3D Scene Viewport (Deferred & Lazy-Loaded) */}
+      {is3DReady && (
+        <Suspense fallback={<div className="absolute inset-0 bg-[#0a0f1d]" />}>
+          <ThreeDemographicScene
+            names={computedStatsList}
+            selectedIndex={selectedIndex}
+            onSelectName={setSelectedIndex}
+            isAutoRotate={isAutoRotate}
+            viewMode={viewMode}
+            cameraTrigger={cameraTrigger}
+            isPaused={isAnyModalOpen}
+          />
+        </Suspense>
+      )}
 
       {/* 2. Shiny Navigation Header */}
       <ShinyHeader
@@ -145,32 +166,32 @@ export default function App() {
         onOpenTopNames={() => setIsTopNamesOpen(true)}
       />
 
-      {/* 5. Survival Curves Modal / Full View */}
-      {activeTab === 'curves' && (
-        <SurvivalCurveModal
-          names={computedStatsList}
-          birthYear={birthYear}
-          setBirthYear={setBirthYear}
-          onClose={() => setActiveTab('3d')}
-        />
-      )}
+      {/* 4. Lazy-Loaded Modals */}
+      <Suspense fallback={null}>
+        {activeTab === 'curves' && (
+          <SurvivalCurveModal
+            names={computedStatsList}
+            birthYear={birthYear}
+            setBirthYear={setBirthYear}
+            onClose={() => setActiveTab('3d')}
+          />
+        )}
 
-      {/* 6. Top Names for Cohort Modal */}
-      {isTopNamesOpen && (
-        <CohortTopNamesModal
-          birthYear={birthYear}
-          setBirthYear={setBirthYear}
-          currentlyCompared={namesList}
-          onAddName={handleAddComparisonName}
-          onApplyPreset={handleApplyPreset}
-          onClose={() => setIsTopNamesOpen(false)}
-        />
-      )}
+        {isTopNamesOpen && (
+          <CohortTopNamesModal
+            birthYear={birthYear}
+            setBirthYear={setBirthYear}
+            currentlyCompared={namesList}
+            onAddName={handleAddComparisonName}
+            onApplyPreset={handleApplyPreset}
+            onClose={() => setIsTopNamesOpen(false)}
+          />
+        )}
 
-      {/* 7. Methodology & Insee Research Modal */}
-      {isMethodologyOpen && (
-        <MethodologyModal onClose={() => setIsMethodologyOpen(false)} />
-      )}
+        {isMethodologyOpen && (
+          <MethodologyModal onClose={() => setIsMethodologyOpen(false)} />
+        )}
+      </Suspense>
     </div>
   );
 }
