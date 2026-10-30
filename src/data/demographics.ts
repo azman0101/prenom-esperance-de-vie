@@ -12,16 +12,11 @@ export interface Manifest {
   generatedAt: string;
   birthYears: number[];
   deathsThrough: string;
-  trainingThrough: number;
+  deathsCoverageStart: number;
+  incompleteCoverageThrough: number;
+  minObservationBirths: number;
   mortality: { year: number; tables: Record<Sex, LifeTable>; maximumReferenceError: number };
   sources: { title: string; url: string; sha256: string; modified?: string }[];
-  model: {
-    version: string;
-    validated: boolean;
-    reason?: string;
-    improvement?: number;
-    interval: string;
-  };
 }
 export type BirthRecord = [name: string, sex: Sex, births: number, rank: number];
 export interface Observation {
@@ -32,31 +27,22 @@ export interface Observation {
   previousBirths: number | null;
   earlyCoverageWarning: boolean;
 }
-export interface Effect {
-  ratio: number;
-  lower: number;
-  upper: number;
-}
 export interface Cohort {
   version: string;
   year: number;
   names: BirthRecord[];
   observations: Record<string, Observation>;
-  effects: Record<string, Effect>;
 }
 export type TopNames = Record<string, Record<Sex, [string, number, number][]>>;
 export interface Dataset {
   manifest: Manifest;
   cohort: Cohort;
 }
+/** Référence nationale par âge et sexe : ne dépend pas du prénom. */
 export interface Projection {
-  basis: 'name-model' | 'national-reference';
-  reason: string;
   tableYear: number;
   expectedAge: number;
   remainingYears: number;
-  interval: [number, number] | null;
-  ratio: number;
   table: LifeTable;
 }
 export interface NameStats {
@@ -70,6 +56,7 @@ export interface NameStats {
   observation: Observation | null;
   observedSurvival: number | null;
   observedThrough: string;
+  coverage: { from: number; incompleteThrough: number };
   projection: Projection;
   popularityTrend: 'up' | 'down' | 'stable' | 'unavailable';
   popularityDeltaPercent: number | null;
@@ -93,28 +80,25 @@ export function clampBirthYear(year: number, years: number[]): number {
     Math.max(years[0], Math.round(Number.isFinite(year) ? year : years[0])),
   );
 }
-export function remainingLife(table: LifeTable, age: number, ratio = 1): number {
+export function remainingLife(table: LifeTable, age: number): number {
   const last = table.q.length - 1;
-  if (age >= last) return table.tailLife / ratio;
+  if (age >= last) return table.tailLife;
   let survival = 1,
     area = 0;
   for (let x = age; x < last; x++) {
-    const following = survival * Math.pow(1 - table.q[x], ratio);
+    const following = survival * (1 - table.q[x]);
     area += (survival + following) / 2;
     survival = following;
   }
-  return area + (survival * table.tailLife) / ratio;
+  return area + survival * table.tailLife;
 }
 export function projectedSurvival(projection: Projection, fromAge: number, toAge: number): number {
   if (toAge <= fromAge) return 1;
-  const { table, ratio } = projection;
+  const { table } = projection;
   const last = table.q.length - 1;
   let result = 1;
-  for (let age = fromAge; age < Math.min(toAge, last); age++)
-    result *= Math.pow(1 - table.q[age], ratio);
-  return (
-    result * Math.exp((-Math.max(0, toAge - Math.max(last, fromAge)) * ratio) / table.tailLife)
-  );
+  for (let age = fromAge; age < Math.min(toAge, last); age++) result *= 1 - table.q[age];
+  return result * Math.exp(-Math.max(0, toAge - Math.max(last, fromAge)) / table.tailLife);
 }
 export function survivalAtYear(observation: Observation, year: number): number | null {
   if (observation.status !== 'available') return null;
@@ -144,13 +128,8 @@ export function computeNameStats(
   const record = candidates.filter((r) => r[1] === gender).sort((a, b) => b[2] - a[2])[0];
   const observation = data.cohort.observations[gender + ':' + normalized] ?? null;
   const age = ageFromBirthYear(birthYear);
-  const effect =
-    data.manifest.model.validated && birthYear >= 1970
-      ? data.cohort.effects[gender + ':' + normalized]
-      : undefined;
   const table = data.manifest.mortality.tables[gender];
-  const ratio = effect?.ratio ?? 1;
-  const remaining = remainingLife(table, age, ratio);
+  const remaining = remainingLife(table, age);
   const previous = observation?.previousBirths;
   // La comparaison utilise le même regroupement de graphies aux deux années.
   const delta = observation && previous ? (100 * (observation.births - previous)) / previous : null;
@@ -169,24 +148,14 @@ export function computeNameStats(
       ? survivalAtYear(observation, Number(data.manifest.deathsThrough.slice(0, 4)))
       : null,
     observedThrough: data.manifest.deathsThrough,
+    coverage: {
+      from: data.manifest.deathsCoverageStart,
+      incompleteThrough: data.manifest.incompleteCoverageThrough,
+    },
     projection: {
-      basis: effect ? 'name-model' : 'national-reference',
-      reason: effect
-        ? 'Association estimée au prénom ; extrapolation aux âges futurs.'
-        : !record
-          ? 'Prénom non diffusé pour ce sexe et cette année ; référence nationale seule.'
-          : (data.manifest.model.reason ??
-            'Effectifs de calibration insuffisants ; référence nationale seule.'),
       tableYear: data.manifest.mortality.year,
       expectedAge: age + remaining,
       remainingYears: remaining,
-      interval: effect
-        ? [
-            age + remainingLife(table, age, effect.upper),
-            age + remainingLife(table, age, effect.lower),
-          ]
-        : null,
-      ratio,
       table,
     },
     popularityTrend:
@@ -199,7 +168,7 @@ export function observationLabel(item: NameStats): string {
   if (item.observedSurvival !== null) return item.observedSurvival.toFixed(1) + ' %';
   const status = item.observation?.status;
   return status === 'before-coverage'
-    ? 'Indisponible avant 1970'
+    ? 'Indisponible avant ' + item.coverage.from
     : status === 'small-sample'
       ? 'Effectif insuffisant'
       : status === 'inconsistent'

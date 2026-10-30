@@ -7,6 +7,7 @@ import {
   observationLabel,
   clampBirthYear,
 } from '../data/demographics';
+import { YearInput } from './YearInput';
 
 export interface ControlDockProps {
   names: NameStats[];
@@ -44,13 +45,11 @@ export const YearControl: React.FC<{
     </button>
     <label className="text-sm text-slate-300">
       Cohorte{' '}
-      <input
-        aria-label="Année de naissance"
-        type="number"
-        min={years[0]}
-        max={years.at(-1)}
-        value={year}
-        onChange={(e) => onChange(clampBirthYear(Number(e.target.value), years))}
+      <YearInput
+        ariaLabel="Année de naissance"
+        year={year}
+        years={years}
+        onChange={onChange}
         className="bg-slate-950 rounded-lg p-2 w-24 text-sky-300 border border-white/10"
       />
     </label>
@@ -82,20 +81,14 @@ export const StatsCard: React.FC<{ item: NameStats }> = ({ item }) => (
       <p className="text-sm text-slate-300">
         Soit {item.projection.remainingYears.toFixed(1)} années restantes en moyenne
       </p>
-      {item.projection.interval && (
-        <p className="text-xs text-slate-400">
-          Incertitude du modèle à 95 % :{' '}
-          {item.projection.interval.map((v) => v.toFixed(1)).join('–')} ans
-        </p>
-      )}
     </div>
     <p className="text-xs text-amber-200">
-      {item.projection.basis === 'name-model'
-        ? 'Projection ajustée au prénom'
-        : 'Référence INSEE seule'}{' '}
-      · mortalité {item.projection.tableYear}
+      Référence INSEE par âge et sexe, mortalité {item.projection.tableYear} : identique pour tous
+      les prénoms de même sexe et de même cohorte.
     </p>
-    <p className="text-xs text-slate-400">{item.projection.reason}</p>
+    {item.births === null && (
+      <p className="text-xs text-slate-400">Prénom non diffusé pour ce sexe et cette année.</p>
+    )}
     <div className="grid grid-cols-2 gap-3 border-t border-white/10 pt-3">
       <div>
         <p className="text-xs text-slate-400">Naissances publiées · arrondies à 5</p>
@@ -115,7 +108,8 @@ export const StatsCard: React.FC<{ item: NameStats }> = ({ item }) => (
     )}
     {item.observation?.earlyCoverageWarning && (
       <p className="text-xs text-amber-200">
-        Les premiers fichiers de décès de 1970 à 1975 présentent des lacunes.
+        Les premiers fichiers de décès ({item.coverage.from} à {item.coverage.incompleteThrough})
+        présentent des lacunes.
       </p>
     )}
     <p className="text-xs text-slate-400">

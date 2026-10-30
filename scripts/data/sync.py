@@ -2,6 +2,7 @@
 import argparse
 import csv
 import hashlib
+from html import unescape
 import io
 import json
 import math
@@ -21,9 +22,19 @@ from urllib.request import Request, urlopen
 
 import duckdb
 import openpyxl
-from model import MODEL_VERSION, remaining_life, train
+from lifetable import remaining_life
 
 ROOT = Path(__file__).resolve().parents[2]
+USER_AGENT = "PrenomsLongevite/1.0 (source audit and aggregate statistics)"
+# Première cohorte de naissance publiée (choix produit) ; la précédente sert de dénominateur de tendance.
+FIRST_BIRTH_YEAR = 1920
+# Moins de naissances regroupées : survie jugée trop instable pour être publiée.
+MIN_OBSERVATION_BIRTHS = 100
+# Les premiers fichiers de décès sont lacunaires : années de couverture non fiables après le début.
+EARLY_COVERAGE_GAP_YEARS = 6
+# Écart maximal toléré (années) entre l'espérance reproduite et la table officielle.
+MAX_REFERENCE_ERROR = .2
+MAX_COHORT_BYTES = 24 * 1024 * 1024
 CATALOG = "https://api.insee.fr/melodi/catalog/"
 DEATHS = "https://www.data.gouv.fr/api/1/datasets/66d997ba09e4429d7f846249/"
 
@@ -40,7 +51,7 @@ def download(url, target, offline=False):
         if not target.exists():
             raise ValueError(f"Cache absent : {target}")
         return target
-    headers = {"User-Agent": "PrenomsLongevite/1.0 (source audit and aggregate statistics)"}
+    headers = {"User-Agent": USER_AGENT}
     old = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     if old.get("url") == url and target.exists():
         if old.get("etag"):
@@ -125,24 +136,24 @@ def load_mortality(q_path, e_path):
         for age in (0, 20, 40, 60, 80, 99):
             maximum_error = max(maximum_error, abs(remaining_life(q, tail, age) - expected[age]))
         tables[sex] = {"q": q, "tailLife": tail}
-    if maximum_error > .2:
+    if maximum_error > MAX_REFERENCE_ERROR:
         raise ValueError(f"Espérance de vie non reproduite : écart {maximum_error:.3f} an")
-    history = {sex: {y: [v / 100000 for v in q] for y, q in years.items()} for sex, years in qs.items()}
     return {"year": year, "tables": tables, "maximumReferenceError": maximum_error,
-            "ageConvention": "Quotients d'âge atteint convertis en âges révolus par interpolation à demi-année"}, history
+            "ageConvention": "Quotients d'âge atteint convertis en âges révolus par interpolation à demi-année"}
 
 
-def available_observation(birth_year, births, deaths):
-    if birth_year < 1970:
+def available_observation(birth_year, births, deaths, coverage_start):
+    if birth_year < coverage_start:
         return "before-coverage"
     if births <= 0 or deaths > births:
         return "inconsistent"
-    if births < 100:
+    if births < MIN_OBSERVATION_BIRTHS:
         return "small-sample"
     return "available"
 
 
-def build(cache, output, offline=False):
+def discover(cache, offline=False):
+    """Découvre les publications courantes (métadonnées et pages légères uniquement)."""
     cache.mkdir(parents=True, exist_ok=True)
     names_meta = json_source(CATALOG + "DS_PRENOM", cache / "names-meta.json", offline)
     death_meta = json_source(DEATHS, cache / "deaths-meta.json", offline)
@@ -151,7 +162,6 @@ def build(cache, output, offline=False):
     # des niveaux géographiques. Sa page est découverte depuis le catalogue.
     publications = [x["content"] for relation in names_meta["relations"]
                     for x in relation.get("url", []) if x.get("lang") == "fr" and x.get("content")]
-    from html import unescape
     names_page_url = publications[-1]
     names_page = download(names_page_url, cache / "names-landing.html", offline).read_text()
     national_links = re.findall(r'href=["\']([^"\']*nat[^"\']*csv[^"\']*\.zip)["\']', names_page, re.I)
@@ -159,13 +169,6 @@ def build(cache, output, offline=False):
         raise ValueError("Extrait national CSV non identifié sur la publication INSEE")
     names_url = urljoin(names_page_url, unescape(national_links[0]))
     death_resource = next(r for r in death_meta["resources"] if r["format"].lower() == "parquet")
-    names_path = download(names_url, cache / "names.zip", offline)
-    with zipfile.ZipFile(names_path) as archive:
-        csv_files = [name for name in archive.namelist() if name.endswith('.csv')]
-        if len(csv_files) != 1:
-            raise ValueError("Contenu inattendu de l'archive nationale")
-        (cache / 'names.csv').write_bytes(archive.read(csv_files[0]))
-    deaths_path = download(death_resource["url"], cache / "deaths.parquet", offline)
     # La relation du catalogue suit le nouveau bilan ; aucun millésime dans le code.
     relations = [r for r in mortality_meta["relations"]
                  if any("Bilan démographique" in x.get("content", "") for x in r.get("titleComplement", []))]
@@ -191,11 +194,55 @@ def build(cache, output, offline=False):
     files = re.findall(r'href=["\']([^"\']+\.xlsx)["\']', detail)
     q_url = urljoin(detail_url, next(u for u in files if "Quotients_mortalite" in u))
     e_url = urljoin(detail_url, next(u for u in files if "Esperance_vie" in u))
+    return {"names_meta": names_meta, "death_meta": death_meta, "names_url": names_url,
+            "death_resource": death_resource, "q_url": q_url, "e_url": e_url}
+
+
+def source_identity(url, path, offline):
+    """Identité d'une source volumineuse sans la télécharger (HEAD), ou empreinte du cache hors ligne."""
+    if offline:
+        return fingerprint(path)
+    try:
+        with urlopen(Request(url, method="HEAD", headers={"User-Agent": USER_AGENT}), timeout=60) as response:
+            return [response.headers.get(h) for h in ("ETag", "Last-Modified", "Content-Length")]
+    except OSError:
+        return None
+
+
+def source_stamp(cache, offline=False):
+    """Empreinte courte des sources amont : sert de clé de cache au snapshot, sans l'acquérir."""
+    cache.mkdir(parents=True, exist_ok=True)
+    found = discover(cache, offline)
+    files = {"names": (found["names_url"], cache / "names.zip"),
+             "deaths": (found["death_resource"]["url"], cache / "deaths.parquet"),
+             "mortalityQ": (found["q_url"], cache / "mortality-q.xlsx"),
+             "mortalityE": (found["e_url"], cache / "mortality-e.xlsx")}
+    identity = {key: [url, source_identity(url, path, offline)] for key, (url, path) in files.items()}
+    meta = [found["names_meta"].get("modified"), found["names_meta"]["temporal"]["endPeriod"],
+            found["death_resource"].get("last_modified"), found["death_meta"]["temporal_coverage"]]
+    return hashlib.sha256(json.dumps([identity, meta], sort_keys=True).encode()).hexdigest()[:16]
+
+
+def build(cache, output, offline=False, first_year=FIRST_BIRTH_YEAR):
+    cache.mkdir(parents=True, exist_ok=True)
+    found = discover(cache, offline)
+    names_meta, death_meta = found["names_meta"], found["death_meta"]
+    names_url, death_resource = found["names_url"], found["death_resource"]
+    q_url, e_url = found["q_url"], found["e_url"]
+    names_path = download(names_url, cache / "names.zip", offline)
+    with zipfile.ZipFile(names_path) as archive:
+        csv_files = [name for name in archive.namelist() if name.endswith('.csv')]
+        if len(csv_files) != 1:
+            raise ValueError("Contenu inattendu de l'archive nationale")
+        (cache / 'names.csv').write_bytes(archive.read(csv_files[0]))
+    deaths_path = download(death_resource["url"], cache / "deaths.parquet", offline)
     q_path = download(q_url, cache / "mortality-q.xlsx", offline)
     e_path = download(e_url, cache / "mortality-e.xlsx", offline)
-    mortality, history = load_mortality(q_path, e_path)
+    mortality = load_mortality(q_path, e_path)
     coverage = death_meta["temporal_coverage"]
     cutoff = coverage["end"][:10]
+    coverage_start = int(coverage["start"][:4])
+    incomplete_through = coverage_start + EARLY_COVERAGE_GAP_YEARS - 1
     cutoff_year = int(cutoff[:4])
     full_year = cutoff_year if cutoff.endswith("12-31") else cutoff_year - 1
     report = {"excluded": {}, "coverageStart": coverage["start"], "coverageEnd": cutoff}
@@ -218,7 +265,7 @@ def build(cache, output, offline=False):
     else:
         select = "PRENOM AS name, CASE CAST(SEXE AS VARCHAR) WHEN '1' THEN 'M' WHEN '2' THEN 'F' ELSE CAST(SEXE AS VARCHAR) END AS sex, PERIODE AS year, VALEUR AS births, RANG AS rank"
         geo = "TRUE"
-    db.execute(f"CREATE TABLE births AS SELECT name, sex, CAST(year AS INTEGER) AS year, CAST(births AS INTEGER) AS births, CAST(rank AS INTEGER) AS rank, link_name(name) AS key FROM (SELECT {select} FROM read_csv(?, delim=';', header=true) WHERE {geo}) WHERE CAST(year AS INTEGER)>=1900", [csv_path])
+    db.execute(f"CREATE TABLE births AS SELECT name, sex, CAST(year AS INTEGER) AS year, CAST(births AS INTEGER) AS births, CAST(rank AS INTEGER) AS rank, link_name(name) AS key FROM (SELECT {select} FROM read_csv(?, delim=';', header=true) WHERE {geo}) WHERE CAST(year AS INTEGER)>=?", [csv_path, first_year - 1])
     max_year = db.execute("SELECT max(year) FROM births").fetchone()[0]
     if max_year != int(names_meta["temporal"]["endPeriod"][:4]):
         raise ValueError("Couverture des naissances incohérente avec le catalogue")
@@ -240,7 +287,7 @@ def build(cache, output, offline=False):
         OR (substr(code_insee_naissance,1,3) IN ('971','972','973','974') AND code_insee_naissance NOT IN ('97123','97127'))
         OR (substr(code_insee_naissance,1,3)='976' AND birth_year>=2012))"""
     report["excluded"]["opposition"] = db.execute("SELECT count(*) FROM raw_deaths WHERE opposition IS TRUE").fetchone()[0]
-    valid = f"""opposition IS FALSE AND {geo_filter} AND sex IS NOT NULL""".replace("sex IS NOT NULL", "sexe IN ('M','F')")
+    valid = f"opposition IS FALSE AND {geo_filter} AND sexe IN ('M','F')"
     print("Agrégation des décès (lecture colonnaire, limite mémoire 2 Go)…", flush=True)
     db.execute("CREATE TABLE filtered(key VARCHAR,sexe VARCHAR,birth_year INTEGER,death_year INTEGER,duplicate BIGINT)")
     partitions = work / "partitions"
@@ -250,11 +297,11 @@ def build(cache, output, offline=False):
     partition_sql = str(partitions).replace("'", "''")
     db.execute(f"""COPY (SELECT prenoms,sexe,date_naissance,nom,date_deces,code_insee_deces,
         numero_acte_deces,fichier_origine,birth_year,death_year FROM raw_deaths
-        WHERE {valid} AND birth_year BETWEEN 1900 AND ? AND death_year BETWEEN birth_year AND ?
+        WHERE {valid} AND birth_year BETWEEN ? AND ? AND death_year BETWEEN birth_year AND ?
         AND (birth_date IS NULL OR death_date IS NULL OR death_date >= birth_date)
         AND (death_date IS NOT NULL OR regexp_matches(date_deces, '^[0-9]{{4}}(00(00|0[1-9]|[12][0-9]|3[01])|(0[1-9]|1[0-2])00)$'))
         AND (death_year <= ? OR (death_date IS NOT NULL AND death_date <= CAST(? AS DATE))))
-        TO '{partition_sql}' (FORMAT PARQUET, PARTITION_BY(birth_year))""", [max_year, cutoff_year, full_year, cutoff])
+        TO '{partition_sql}' (FORMAT PARQUET, PARTITION_BY(birth_year))""", [first_year - 1, max_year, cutoff_year, full_year, cutoff])
     print("Partitionnement des décès terminé", flush=True)
     for directory in sorted(partitions.glob('birth_year=*')):
         db.read_parquet(str(directory / '*.parquet'), hive_partitioning=True).create_view('cohort_deaths', replace=True)
@@ -266,7 +313,7 @@ def build(cache, output, offline=False):
     print("Déduplication par cohorte terminée", flush=True)
     report["excluded"]["duplicates"] = db.execute("SELECT count(*) FROM filtered WHERE duplicate>1").fetchone()[0]
     report["excluded"]["outsideBirthGeography"] = db.execute(f"SELECT count(*) FROM raw_deaths WHERE NOT {geo_filter}").fetchone()[0]
-    report["excluded"]["invalidYears"] = db.execute("SELECT count(*) FROM raw_deaths WHERE birth_year IS NULL OR death_year IS NULL OR birth_year<1900 OR death_year<birth_year").fetchone()[0]
+    report["excluded"]["invalidYears"] = db.execute("SELECT count(*) FROM raw_deaths WHERE birth_year IS NULL OR death_year IS NULL OR birth_year<? OR death_year<birth_year", [first_year - 1]).fetchone()[0]
     report["excluded"]["unknownDateInPartialYear"] = db.execute("SELECT count(*) FROM raw_deaths WHERE death_year=? AND death_date IS NULL AND death_year>?", [cutoff_year, full_year]).fetchone()[0]
     report["exclusionCountsMayOverlap"] = True
     report["rawDeaths"] = db.execute("SELECT count(*) FROM raw_deaths").fetchone()[0]
@@ -278,69 +325,40 @@ def build(cache, output, offline=False):
     pooled = {(key, sex, year): (int(births), variants) for key, sex, year, births, variants in db.execute("SELECT * FROM pooled").fetchall()}
     report["unmatchedDeathGroups"] = sum(k not in pooled for k in observations)
 
-    print("Calibration du modèle…", flush=True)
-    training, group_births = [], {}
-    for (key, sex, year), (births, _) in pooled.items():
-        if year < 1976 or births < 100:
-            continue
-        events = dict(observations.get((key, sex, year), []))
-        if sum(events.values()) > births:
-            continue
-        decade = year // 10 * 10
-        group = key, sex, decade
-        group_births[group] = group_births.get(group, 0) + births
-        risk = births
-        for period in range(year, full_year + 1):
-            deaths = events.get(period, 0)
-            q = history[sex].get(period)
-            age = period - year
-            if q and age < len(q) and risk > 0:
-                training.append((key, sex, decade, period, deaths, risk, q[age]))
-            risk -= deaths
-    effects, model_report = train(training, group_births)
-    report["model"] = model_report
-    print("Validation modèle :", model_report["validated"], model_report.get("improvement"), flush=True)
-
     source_info = [{"title": "Prénoms INSEE", "url": names_url, "sha256": fingerprint(names_path), "modified": names_meta["modified"]},
                    {"title": "Décès data.gouv.fr / INSEE", "url": death_resource["url"], "sha256": fingerprint(deaths_path), "modified": death_resource["last_modified"]},
                    {"title": "Quotients de mortalité INSEE", "url": q_url, "sha256": fingerprint(q_path)},
                    {"title": "Espérance de vie INSEE", "url": e_url, "sha256": fingerprint(e_path)}]
-    version = hashlib.sha256(json.dumps([source_info, MODEL_VERSION, cutoff, max_year, mortality["year"], fingerprint(__file__), fingerprint(Path(__file__).with_name("model.py"))], sort_keys=True).encode()).hexdigest()[:16]
+    version = hashlib.sha256(json.dumps([source_info, cutoff, max_year, first_year, mortality["year"], fingerprint(__file__), fingerprint(Path(__file__).with_name("lifetable.py"))], sort_keys=True).encode()).hexdigest()[:16]
     staging = output.with_name(output.name + ".staging")
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
-    top, index = {}, set()
+    top = {}
     source_rows = db.execute("SELECT name,sex,year,births,rank,key FROM births ORDER BY year,sex,rank,name").fetchall()
     by_year = {}
     for name, sex, year, births, rank, key in source_rows:
-        index.add((name, sex))
-        if year >= 1920:
+        if year >= first_year:
             by_year.setdefault(year, []).append([name, sex, births, rank])
             if rank <= 10:
                 top.setdefault(str(year), {"M": [], "F": []})[sex].append([name, births, rank])
     for year, records in by_year.items():
-        obs, model_effects = {}, {}
+        obs = {}
         for key, sex in {(clean_name(r[0]), r[1]) for r in records}:
             count, variants = pooled[key, sex, year]
             series = observations.get((key, sex, year), [])
             total = sum(x[1] for x in series)
-            status = available_observation(year, count, total)
+            status = available_observation(year, count, total, coverage_start)
             previous = pooled.get((key, sex, year - 1))
             obs[f"{sex}:{key}"] = {"births": count, "variants": variants, "deaths": series if status == "available" else [],
                                      "status": status, "previousBirths": previous[0] if previous else None,
-                                     "earlyCoverageWarning": 1970 <= year <= 1975}
-            effect = effects.get((key, sex, year // 10 * 10)) if year >= 1970 else None
-            if effect:
-                # Sensibilité du dénominateur : arrondi ±2 par graphie regroupée.
-                epsilon = 2 * variants / max(count - total, 1)
-                model_effects[f"{sex}:{key}"] = {**effect, "lower": effect["lower"] * max(.01, 1 - epsilon),
-                                                 "upper": effect["upper"] * (1 + epsilon)}
-        write_json(staging / "cohorts" / f"{year}.json", {"version": version, "year": year, "names": records, "observations": obs, "effects": model_effects})
+                                     "earlyCoverageWarning": coverage_start <= year <= incomplete_through}
+        write_json(staging / "cohorts" / f"{year}.json", {"version": version, "year": year, "names": records, "observations": obs})
     write_json(staging / "top.json", {"version": version, "years": top})
-    write_json(staging / "names.json", sorted(index))
     manifest = {"schemaVersion": 1, "version": version, "generatedAt": datetime.now(timezone.utc).isoformat(),
-                "birthYears": sorted(by_year), "deathsThrough": cutoff, "trainingThrough": model_report.get("trainedThrough", full_year),
-                "sources": source_info, "mortality": mortality, "model": model_report}
+                "birthYears": sorted(by_year), "deathsThrough": cutoff,
+                "deathsCoverageStart": coverage_start, "incompleteCoverageThrough": incomplete_through,
+                "minObservationBirths": MIN_OBSERVATION_BIRTHS,
+                "sources": source_info, "mortality": mortality}
     write_json(staging / "manifest.json", manifest)
     write_json(staging / "quality-report.json", report)
     validate_snapshot(staging)
@@ -349,7 +367,12 @@ def build(cache, output, offline=False):
     shutil.rmtree(backup, ignore_errors=True)
     if output.exists():
         output.replace(backup)
-    staging.replace(output)
+    try:
+        staging.replace(output)
+    except BaseException:
+        if backup.exists():
+            backup.replace(output)
+        raise
     shutil.rmtree(backup, ignore_errors=True)
     db.close()
     work_dir.cleanup()
@@ -359,9 +382,11 @@ def build(cache, output, offline=False):
 def validate_snapshot(path):
     manifest = json.loads((path / "manifest.json").read_text())
     assert manifest["schemaVersion"] == 1
-    assert manifest["birthYears"] == list(range(1920, max(manifest["birthYears"]) + 1))
+    years = manifest["birthYears"]
+    assert years == list(range(years[0], years[-1] + 1))
+    coverage_start = manifest["deathsCoverageStart"]
     assert json.loads((path / "top.json").read_text())["version"] == manifest["version"]
-    for year in manifest["birthYears"]:
+    for year in years:
         cohort = json.loads((path / "cohorts" / f"{year}.json").read_text())
         assert cohort["version"] == manifest["version"]
         assert cohort["year"] == year and cohort["names"]
@@ -369,8 +394,8 @@ def validate_snapshot(path):
             assert len(row) == 4 and row[1] in ("M", "F") and row[2] > 0 and row[3] > 0
         for obs in cohort["observations"].values():
             if obs["status"] == "available":
-                assert year >= 1970 and 0 <= sum(x[1] for x in obs["deaths"]) <= obs["births"]
-        assert (path / "cohorts" / f"{year}.json").stat().st_size < 24 * 1024 * 1024
+                assert year >= coverage_start and 0 <= sum(x[1] for x in obs["deaths"]) <= obs["births"]
+        assert (path / "cohorts" / f"{year}.json").stat().st_size < MAX_COHORT_BYTES
 
 
 if __name__ == "__main__":
@@ -378,9 +403,13 @@ if __name__ == "__main__":
     parser.add_argument("--cache", type=Path, default=ROOT / ".cache/data")
     parser.add_argument("--output", type=Path, default=ROOT / "public/data")
     parser.add_argument("--offline", action="store_true")
+    parser.add_argument("--first-year", type=int, default=FIRST_BIRTH_YEAR)
     parser.add_argument("--validate", type=Path)
+    parser.add_argument("--stamp", action="store_true", help="afficher l'empreinte des sources amont sans les télécharger")
     args = parser.parse_args()
     if args.validate:
         validate_snapshot(args.validate)
+    elif args.stamp:
+        print(source_stamp(args.cache.resolve(), args.offline))
     else:
-        build(args.cache.resolve(), args.output.resolve(), args.offline)
+        build(args.cache.resolve(), args.output.resolve(), args.offline, args.first_year)

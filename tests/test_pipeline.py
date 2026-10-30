@@ -10,12 +10,11 @@ from unittest.mock import patch
 import zipfile
 
 import duckdb
-import numpy as np
 import openpyxl
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts/data'))
-from model import fit, train, remaining_life
-from sync import build, clean_name, available_observation, load_mortality
+from lifetable import remaining_life
+from sync import build, clean_name, available_observation, source_stamp
 
 
 class MortalityTest(unittest.TestCase):
@@ -26,50 +25,13 @@ class MortalityTest(unittest.TestCase):
         # soustrait pas l'âge à l'espérance résiduelle.
         for age in (0, 40, 99, 105):
             self.assertAlmostEqual(remaining_life(q, tail, age), tail, delta=.01)
-        self.assertLess(remaining_life(q, tail, 40, 2), remaining_life(q, tail, 40))
-
-    def test_name_effect_estimated_not_hashed(self):
-        rows = []
-        for name, ratio in [('Alpha', .6), ('Beta', 1.6)]:
-            for year in range(2000, 2020):
-                p = 1 - .98 ** ratio
-                rows.append((name, 'M', 1980, year, round(10000 * p), 10000, .02))
-        effects = fit(rows, 10)
-        self.assertAlmostEqual(effects['Alpha', 'M', 1980]['ratio'], .6, delta=.03)
-        self.assertAlmostEqual(effects['Beta', 'M', 1980]['ratio'], 1.6, delta=.03)
-        self.assertLess(effects['Alpha', 'M', 1980]['lower'], effects['Alpha', 'M', 1980]['upper'])
-
-    def test_held_out_years_gate_and_small_samples(self):
-        rows = []
-        for year in range(2000, 2026):
-            rows.append(('Alpha', 'M', 1980, year, 200, 10000, .02))
-        effects, report = train(rows, {('Alpha', 'M', 1980): 10000})
-        self.assertFalse(report['validated'])
-        self.assertEqual(effects, {})
-        self.assertEqual([f['testThrough'] for f in report['folds']], [2021, 2023, 2025])
-
-    def test_real_signal_passes_temporal_validation(self):
-        rows = [(name, 'M', 1980, year, round(10000 * (1 - .98 ** ratio)), 10000, .02)
-                for name, ratio in [('Alpha', .2), ('Beta', 3)] for year in range(2000, 2026)]
-        effects, report = train(rows, {('Alpha', 'M', 1980): 10000, ('Beta', 'M', 1980): 500})
-        self.assertTrue(report['validated'])
-        self.assertIn(('Alpha', 'M', 1980), effects)
-        self.assertNotIn(('Beta', 'M', 1980), effects)
 
     def test_unavailable_is_not_zero(self):
-        self.assertEqual(available_observation(1969, 1000, 4), 'before-coverage')
-        self.assertEqual(available_observation(1980, 50, 0), 'small-sample')
-        self.assertEqual(available_observation(1980, 100, 101), 'inconsistent')
+        self.assertEqual(available_observation(1969, 1000, 4, 1970), 'before-coverage')
+        self.assertEqual(available_observation(1980, 50, 0, 1970), 'small-sample')
+        self.assertEqual(available_observation(1980, 100, 101, 1970), 'inconsistent')
+        self.assertEqual(available_observation(1980, 1000, 4, 1985), 'before-coverage', 'Le début de couverture vient des métadonnées')
         self.assertEqual(clean_name('  Éloïse-Marie ’ '), "eloise-marie '")
-
-    def test_validation_uses_the_publication_eligibility_rule(self):
-        rows = []
-        for year in range(2000, 2026):
-            rows.append(('Common', 'M', 1980, year, 10, 10000 - 10 * (year - 2000), .001))
-            rows.append(('Rare', 'M', 1980, year, 3, 200 - 3 * (year - 2000), .001))
-        effects, report = train(rows, {('Common', 'M', 1980): 10000, ('Rare', 'M', 1980): 200})
-        self.assertFalse(report['validated'], 'Un groupe non publiable ne doit pas justifier le score de validation')
-        self.assertEqual(effects, {})
 
 
 class PipelineIntegrationTest(unittest.TestCase):
@@ -133,5 +95,37 @@ class PipelineIntegrationTest(unittest.TestCase):
             (cache / 'mortality-q.xlsx').write_bytes(b'broken')
             with self.assertRaises(Exception): build(cache, output, offline=True)
             self.assertEqual((output / 'manifest.json').read_bytes(), before)
+
+    def test_coverage_start_comes_from_source_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); cache = root / 'cache'; cache.mkdir(); output = root / 'data'
+            self.create_cache(cache)
+            meta = json.loads((cache / 'deaths-meta.json').read_text())
+            meta['temporal_coverage']['start'] = '1985-01-01'
+            (cache / 'deaths-meta.json').write_text(json.dumps(meta))
+            build(cache, output, offline=True)
+            manifest = json.loads((output / 'manifest.json').read_text())
+            self.assertEqual((manifest['deathsCoverageStart'], manifest['incompleteCoverageThrough']), (1985, 1990))
+            cohort = json.loads((output / 'cohorts/1980.json').read_text())
+            self.assertEqual(cohort['observations']['M:stephane']['status'], 'before-coverage')
+            self.assertFalse(cohort['observations']['M:stephane']['earlyCoverageWarning'])
+
+    def test_first_year_is_a_parameter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); cache = root / 'cache'; cache.mkdir(); output = root / 'data'
+            self.create_cache(cache)
+            build(cache, output, offline=True, first_year=1990)
+            self.assertEqual(json.loads((output / 'manifest.json').read_text())['birthYears'][0], 1990)
+
+    def test_stamp_identifies_upstream_sources_without_building(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp) / 'cache'; cache.mkdir()
+            self.create_cache(cache)
+            first = source_stamp(cache, offline=True)
+            self.assertEqual(first, source_stamp(cache, offline=True))
+            meta = json.loads((cache / 'deaths-meta.json').read_text())
+            meta['resources'][0]['last_modified'] = '2027-03-01'
+            (cache / 'deaths-meta.json').write_text(json.dumps(meta))
+            self.assertNotEqual(first, source_stamp(cache, offline=True))
 
 if __name__ == '__main__': unittest.main()

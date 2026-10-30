@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef, Suspense, lazy } from 'react';
+import { useState, useMemo, useEffect, useRef, Suspense, lazy } from 'react';
 import { ShinyHeader, ScrollySectionId } from './components/ShinyHeader';
 import { ControlDock, BentoComparatorSection } from './components/ControlDock';
 import { computeNameStats, NameStats, Dataset, Manifest, Cohort, TopNames, readData, clampBirthYear } from './data/demographics';
@@ -310,7 +310,6 @@ export default function App() {
             manifest={manifest}
             birthYear={birthYear}
             setBirthYear={setBirthYear}
-            isInlineSection={true}
           />
         </Suspense>
       </section>
@@ -330,7 +329,6 @@ export default function App() {
             currentlyCompared={namesList}
             onAddName={handleAddComparisonName}
             onApplyPreset={handleApplyPreset}
-            isInlineSection={true}
           />
         </Suspense>
       </section>
@@ -342,7 +340,7 @@ export default function App() {
         className="bento-section visible scroll-mt-44 lg:scroll-mt-32"
       >
         <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement de la méthodologie...</div>}>
-          <MethodologyModal manifest={manifest} isInlineSection={true} />
+          <MethodologyModal manifest={manifest} />
         </Suspense>
       </section>
     </div>

@@ -10,7 +10,6 @@ interface CohortTopNamesModalProps {
   currentlyCompared: string[];
   onAddName: (name: string) => void;
   onApplyPreset: (names: string[], year?: number) => void;
-  isInlineSection?: boolean;
 }
 export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = (props) => {
   const top = props.top[String(props.birthYear)];

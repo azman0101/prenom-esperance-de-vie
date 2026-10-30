@@ -1,6 +1,6 @@
 import React from 'react';
 import { Manifest } from '../data/demographics';
-export const MethodologyModal: React.FC<{ manifest: Manifest; isInlineSection?: boolean }> = ({
+export const MethodologyModal: React.FC<{ manifest: Manifest }> = ({
   manifest,
 }) => (
   <div className="max-w-7xl mx-auto px-4 sm:px-6 pb-16 space-y-5">
@@ -19,10 +19,12 @@ export const MethodologyModal: React.FC<{ manifest: Manifest; isInlineSection?: 
         <p>
           La survie estimée est calculée par 1 − décès cumulés / naissances, avec rapprochement du
           premier prénom, du sexe et de l’année de naissance. Les graphies avec et sans accents
-          peuvent être regroupées pour ce rapprochement.
+          peuvent être regroupées pour ce rapprochement. Sous {manifest.minObservationBirths} naissances
+          regroupées, la survie n’est pas publiée.
         </p>
         <p>
-          Les décès avant 1970 sont absents ; les années 1970–1975 présentent des lacunes. Des
+          Les décès avant {manifest.deathsCoverageStart} sont absents ; les années{' '}
+          {manifest.deathsCoverageStart}–{manifest.incompleteCoverageThrough} présentent des lacunes. Des
           délais d’enregistrement, migrations, changements de prénom et erreurs résiduelles peuvent
           biaiser les comparaisons.
         </p>
@@ -35,14 +37,14 @@ export const MethodologyModal: React.FC<{ manifest: Manifest; isInlineSection?: 
           à la survie jusqu’à l’âge actuel, puis ajoutées à cet âge.
         </p>
         <p>
-          L’association statistique au prénom est régularisée vers la référence nationale. Un
-          ajustement exige 1 000 naissances, 20 décès et une amélioration globale hors échantillon
-          d’au moins 1 %. Sinon, la référence INSEE seule est affichée.
+          Cette référence ne dépend pas du prénom : elle est identique pour tous les prénoms de même
+          sexe et de même cohorte. Seules les observations de décès enregistrés distinguent les
+          prénoms ; elles ne sont pas extrapolées à un effet propre au prénom, faute d’un gain
+          prédictif démontré.
         </p>
         <p>
-          La validation porte sur les six dernières années complètes de calibration, pas sur toute une vie future. Les intervalles à 95 %
-          décrivent l’incertitude du modèle ; ils ne représentent pas les durées de vie
-          individuelles et ne couvrent pas tous les biais des fichiers.
+          La projection décrit une moyenne nationale, pas la durée de vie d’une personne, et ne
+          couvre pas tous les biais des fichiers.
         </p>
         <p>
           Le prénom est un marqueur, jamais une cause biologique. Aucun profil social n’est déduit
@@ -53,13 +55,12 @@ export const MethodologyModal: React.FC<{ manifest: Manifest; isInlineSection?: 
         <h3 className="text-lg text-sky-300 font-semibold">Actualisation et provenance</h3>
         <p>
           Naissances : {manifest.birthYears[0]}–{manifest.birthYears.at(-1)}. Décès enregistrés
-          jusqu’au {manifest.deathsThrough}. Modèle entraîné jusqu’à {manifest.trainingThrough}.
+          jusqu’au {manifest.deathsThrough}.
         </p>
         <p>
           Snapshot {manifest.version} · acquis le{' '}
           {new Date(manifest.generatedAt).toLocaleDateString('fr-FR')}.
         </p>
-        <p>{manifest.model.validated ? 'Validation du modèle réussie.' : manifest.model.reason}</p>
         <a href="data/quality-report.json" className="text-sky-300 underline">
           Rapport de qualité et de validation
         </a>
@@ -78,7 +79,7 @@ export const MethodologyModal: React.FC<{ manifest: Manifest; isInlineSection?: 
         <p>
           L’étude de 2024 compare les proportions de survivants pour la génération 1970. Elle ne
           fournit ni espérance de vie par prénom ni coefficients sociaux pour cette application.
-          Notre projection est un modèle supplémentaire, distinct de ces travaux.
+          Notre projection repose sur les tables de mortalité de l’INSEE, distinctes de ces travaux.
         </p>
         <p>
           <a

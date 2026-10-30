@@ -1,12 +1,17 @@
 import React, { useState } from 'react';
-import { NameStats, Manifest, projectedSurvival, survivalAtYear } from '../data/demographics';
+import {
+  NameStats,
+  Manifest,
+  ageFromBirthYear,
+  projectedSurvival,
+  survivalAtYear,
+} from '../data/demographics';
 import { YearControl } from './ControlDock';
 interface SurvivalCurveModalProps {
   names: NameStats[];
   birthYear: number;
   setBirthYear: (year: number) => void;
   manifest: Manifest;
-  isInlineSection?: boolean;
 }
 export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
   names,
@@ -18,7 +23,7 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
   const [conditional, setConditional] = useState(false);
   const cutoffYear = Number(manifest.deathsThrough.slice(0, 4));
   const observedAge = cutoffYear - birthYear;
-  const startAge = conditional ? Math.max(0, new Date().getFullYear() - birthYear) : 0;
+  const startAge = conditional ? ageFromBirthYear(birthYear) : 0;
   const maxAge = Math.max(
     110,
     startAge + 15,
@@ -154,9 +159,9 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
         )}
       </div>
       <p className="text-xs text-slate-400">
-        La dernière année observée peut être partielle. Les projections maintiennent les conditions
-        de mortalité constantes ; l’association au prénom est supposée persister aux âges futurs,
-        sans effet causal démontré.
+        La dernière année observée peut être partielle. Les projections appliquent la mortalité
+        nationale par âge et sexe, maintenue constante : elles sont identiques pour tous les prénoms
+        de même sexe ; seules les observations distinguent les prénoms, sans effet causal démontré.
       </p>
     </div>
   );

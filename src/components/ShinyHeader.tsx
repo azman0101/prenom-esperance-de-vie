@@ -1,6 +1,7 @@
 import React from 'react';
 import { BarChart3, Box, BookOpen, Users, Compass, ChevronLeft, ChevronRight, Calendar, LayoutGrid } from 'lucide-react';
 import { ageFromBirthYear, clampBirthYear } from '../data/demographics';
+import { YearInput } from './YearInput';
 
 export type ScrollySectionId = '3d' | 'bento' | 'curves' | 'topNames' | 'methodology';
 
@@ -66,16 +67,11 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
-            <input
-              type="number"
-              min={years[0]}
-              max={years[years.length - 1]}
-              value={birthYear}
-              onChange={(e) => {
-                const val = Number(e.target.value);
-                if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val, years));
-              }}
-              aria-label="Année de naissance globale"
+            <YearInput
+              ariaLabel="Année de naissance globale"
+              year={birthYear}
+              years={years}
+              onChange={setBirthYear}
               className="w-14 bg-transparent border border-white/10 focus:border-sky-400 rounded-md px-1 py-0.5 text-xs font-bold text-center text-sky-300 tabular-nums focus:outline-none"
             />
             <button
