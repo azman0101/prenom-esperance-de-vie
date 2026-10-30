@@ -1,6 +1,15 @@
 import React from 'react';
 import { X, Plus, Check, Trophy, Sparkles, Calendar, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { getTopNamesForYear, computeNameStats } from '../data/demographics';
+import {
+  BIRTH_DECADES,
+  MAX_BIRTH_YEAR,
+  MIN_BIRTH_YEAR,
+  ageFromBirthYear,
+  clampBirthYear,
+  computeNameStats,
+  getTopNamesForYear,
+} from '../data/demographics';
+import { GENERATION_PRESETS } from '../config';
 
 interface CohortTopNamesModalProps {
   birthYear: number;
@@ -12,7 +21,82 @@ interface CohortTopNamesModalProps {
   isInlineSection?: boolean;
 }
 
-const DECADES = [1930, 1940, 1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020];
+
+interface TopNamesColumnProps {
+  title: string;
+  names: string[];
+  gender: 'M' | 'F';
+  birthYear: number;
+  /** Classes Tailwind complètes (détectables au build) pour le titre et le bouton d'ajout. */
+  titleClass: string;
+  addButtonClass: string;
+  isAlreadyAdded: (name: string) => boolean;
+  onAddName: (name: string) => void;
+}
+
+const TopNamesColumn: React.FC<TopNamesColumnProps> = ({
+  title,
+  names,
+  gender,
+  birthYear,
+  titleClass,
+  addButtonClass,
+  isAlreadyAdded,
+  onAddName,
+}) => (
+  <div className="bg-slate-950/80 p-4 sm:p-5 rounded-xl border border-white/[0.07]">
+    <div className={`flex items-center justify-between text-sm font-bold ${titleClass} mb-3 pb-2.5 border-b border-white/[0.06]`}>
+      <span>{title}</span>
+      <span className="text-xs font-normal text-slate-400">Insee RNIPP</span>
+    </div>
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {names.map((name, index) => {
+        const added = isAlreadyAdded(name);
+        const stats = computeNameStats(name, birthYear, gender);
+        return (
+          <div
+            key={name}
+            className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 text-xs border border-white/[0.05] transition-colors"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-5 text-slate-500 font-mono text-[11px] tabular-nums shrink-0">#{index + 1}</span>
+              <span className="font-semibold text-white truncate">{name}</span>
+              {stats.popularityTrend === 'up' ? (
+                <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />
+              ) : stats.popularityTrend === 'down' ? (
+                <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />
+              ) : (
+                <Minus className="w-3 h-3 text-slate-400 shrink-0" />
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => !added && onAddName(name)}
+              disabled={added}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 ${
+                added
+                  ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
+                  : `${addButtonClass} text-white`
+              }`}
+            >
+              {added ? (
+                <>
+                  <Check className="w-3 h-3" />
+                  <span>Actif</span>
+                </>
+              ) : (
+                <>
+                  <Plus className="w-3 h-3" />
+                  <span>Ajouter</span>
+                </>
+              )}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+);
 
 export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
   birthYear,
@@ -27,8 +111,6 @@ export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
 
   const isAlreadyAdded = (name: string) =>
     currentlyCompared.some((c) => c.toLowerCase() === name.toLowerCase());
-
-  const clampYear = (y: number) => Math.min(2024, Math.max(1920, y));
 
   const wrapperClass = isInlineSection
     ? 'max-w-7xl mx-auto w-full px-4 sm:px-6'
@@ -65,7 +147,7 @@ export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
               Top Attributions & Presets Générationnels • {birthYear}
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Les prénoms les plus fréquemment attribués en {birthYear} (Âge actuel : {2026 - birthYear} ans)
+              Les prénoms les plus fréquemment attribués en {birthYear} (Âge actuel : {ageFromBirthYear(birthYear)} ans)
             </p>
           </div>
           {!isInlineSection && onClose && (
@@ -84,30 +166,30 @@ export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-slate-300">
               <Calendar className="w-4 h-4 text-sky-400" />
-              <span>Parcourir les cohortes (1920–2024) :</span>
+              <span>Parcourir les cohortes ({MIN_BIRTH_YEAR}–{MAX_BIRTH_YEAR}) :</span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setBirthYear(clampYear(birthYear - 1))}
+                onClick={() => setBirthYear(clampBirthYear(birthYear - 1))}
                 className="p-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
               <input
                 type="number"
-                min={1920}
-                max={2024}
+                min={MIN_BIRTH_YEAR}
+                max={MAX_BIRTH_YEAR}
                 value={birthYear}
                 onChange={(e) => {
                   const val = Number(e.target.value);
-                  if (!Number.isNaN(val)) setBirthYear(clampYear(val));
+                  if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val));
                 }}
                 className="w-20 bg-slate-950 border border-sky-500/40 rounded-lg px-2 py-1 text-sm font-bold text-center text-sky-400 tabular-nums"
               />
               <button
                 type="button"
-                onClick={() => setBirthYear(clampYear(birthYear + 1))}
+                onClick={() => setBirthYear(clampBirthYear(birthYear + 1))}
                 className="p-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-white/10"
               >
                 <ChevronRight className="w-4 h-4" />
@@ -117,8 +199,8 @@ export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
 
           <input
             type="range"
-            min={1920}
-            max={2024}
+            min={MIN_BIRTH_YEAR}
+            max={MAX_BIRTH_YEAR}
             value={birthYear}
             onChange={(e) => setBirthYear(Number(e.target.value))}
             className="w-full accent-sky-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
@@ -126,7 +208,7 @@ export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
 
           {/* Quick Decade Buttons */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-            {DECADES.map((dec) => {
+            {BIRTH_DECADES.map((dec) => {
               const isSelectedDecade = Math.floor(birthYear / 10) * 10 === dec;
               return (
                 <button
@@ -171,169 +253,47 @@ export const CohortTopNamesModal: React.FC<CohortTopNamesModalProps> = ({
                 </div>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  onApplyPreset(['Jean', 'Marie', 'Michel', 'Françoise'], 1950);
-                  onClose?.();
-                }}
-                className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 text-left border border-white/[0.07] transition-colors group"
-              >
-                <div className="text-xs font-bold text-emerald-400 group-hover:text-emerald-300">
-                  Baby-Boom (1950)
-                </div>
-                <div className="text-[11px] text-slate-400 mt-1">
-                  Jean, Marie, Michel, Françoise
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onApplyPreset(['Nicolas', 'Julien', 'Aurélie', 'Céline'], 1985);
-                  onClose?.();
-                }}
-                className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 text-left border border-white/[0.07] transition-colors group"
-              >
-                <div className="text-xs font-bold text-amber-400 group-hover:text-amber-300">
-                  Génération Y (1985)
-                </div>
-                <div className="text-[11px] text-slate-400 mt-1">
-                  Nicolas, Julien, Aurélie, Céline
-                </div>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  onApplyPreset(['Gabriel', 'Emma', 'Lucas', 'Louise'], 2015);
-                  onClose?.();
-                }}
-                className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 text-left border border-white/[0.07] transition-colors group"
-              >
-                <div className="text-xs font-bold text-pink-400 group-hover:text-pink-300">
-                  XXIe Siècle (2015)
-                </div>
-                <div className="text-[11px] text-slate-400 mt-1">
-                  Gabriel, Emma, Lucas, Louise
-                </div>
-              </button>
+              {GENERATION_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    onApplyPreset([...preset.names], preset.year);
+                    onClose?.();
+                  }}
+                  className="p-3.5 rounded-xl bg-slate-950/70 hover:bg-slate-900 text-left border border-white/[0.07] transition-colors group"
+                >
+                  <div className={`text-xs font-bold ${preset.titleClass}`}>
+                    {preset.label} ({preset.year})
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">{preset.names.join(', ')}</div>
+                </button>
+              ))}
             </div>
           </div>
 
           {/* Top Boys & Top Girls columns */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Top Boys */}
-            <div className="bg-slate-950/80 p-4 sm:p-5 rounded-xl border border-white/[0.07]">
-              <div className="flex items-center justify-between text-sm font-bold text-blue-400 mb-3 pb-2.5 border-b border-white/[0.06]">
-                <span>Top Garçons ({birthYear})</span>
-                <span className="text-xs font-normal text-slate-400">Insee RNIPP</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {data.males.map((name, index) => {
-                  const added = isAlreadyAdded(name);
-                  const stats = computeNameStats(name, birthYear, 'M');
-                  return (
-                    <div
-                      key={name}
-                      className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 text-xs border border-white/[0.05] transition-colors"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="w-5 text-slate-500 font-mono text-[11px] tabular-nums shrink-0">
-                          #{index + 1}
-                        </span>
-                        <span className="font-semibold text-white truncate">{name}</span>
-                        {stats.popularityTrend === 'up' ? (
-                          <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />
-                        ) : stats.popularityTrend === 'down' ? (
-                          <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />
-                        ) : (
-                          <Minus className="w-3 h-3 text-slate-400 shrink-0" />
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => !added && onAddName(name)}
-                        disabled={added}
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 ${
-                          added
-                            ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
-                            : 'bg-sky-600 hover:bg-sky-500 text-white'
-                        }`}
-                      >
-                        {added ? (
-                          <>
-                            <Check className="w-3 h-3" />
-                            <span>Actif</span>
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="w-3 h-3" />
-                            <span>Ajouter</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Top Girls */}
-            <div className="bg-slate-950/80 p-4 sm:p-5 rounded-xl border border-white/[0.07]">
-              <div className="flex items-center justify-between text-sm font-bold text-pink-400 mb-3 pb-2.5 border-b border-white/[0.06]">
-                <span>Top Filles ({birthYear})</span>
-                <span className="text-xs font-normal text-slate-400">Insee RNIPP</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {data.females.map((name, index) => {
-                  const added = isAlreadyAdded(name);
-                  const stats = computeNameStats(name, birthYear, 'F');
-                  return (
-                    <div
-                      key={name}
-                      className="flex items-center justify-between p-2.5 rounded-lg bg-slate-900/70 hover:bg-slate-900 text-xs border border-white/[0.05] transition-colors"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="w-5 text-slate-500 font-mono text-[11px] tabular-nums shrink-0">
-                          #{index + 1}
-                        </span>
-                        <span className="font-semibold text-white truncate">{name}</span>
-                        {stats.popularityTrend === 'up' ? (
-                          <TrendingUp className="w-3 h-3 text-emerald-400 shrink-0" />
-                        ) : stats.popularityTrend === 'down' ? (
-                          <TrendingDown className="w-3 h-3 text-rose-400 shrink-0" />
-                        ) : (
-                          <Minus className="w-3 h-3 text-slate-400 shrink-0" />
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => !added && onAddName(name)}
-                        disabled={added}
-                        className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors shrink-0 ${
-                          added
-                            ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800/50'
-                            : 'bg-pink-600 hover:bg-pink-500 text-white'
-                        }`}
-                      >
-                        {added ? (
-                          <>
-                            <Check className="w-3 h-3" />
-                            <span>Actif</span>
-                          </>
-                        ) : (
-                          <>
-                            <Plus className="w-3 h-3" />
-                            <span>Ajouter</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+            <TopNamesColumn
+              title={`Top Garçons (${birthYear})`}
+              names={data.males}
+              gender="M"
+              birthYear={birthYear}
+              titleClass="text-blue-400"
+              addButtonClass="bg-sky-600 hover:bg-sky-500"
+              isAlreadyAdded={isAlreadyAdded}
+              onAddName={onAddName}
+            />
+            <TopNamesColumn
+              title={`Top Filles (${birthYear})`}
+              names={data.females}
+              gender="F"
+              birthYear={birthYear}
+              titleClass="text-pink-400"
+              addButtonClass="bg-pink-600 hover:bg-pink-500"
+              isAlreadyAdded={isAlreadyAdded}
+              onAddName={onAddName}
+            />
           </div>
         </div>
       </div>

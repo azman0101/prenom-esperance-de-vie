@@ -34,7 +34,8 @@ src/
   main.tsx                      point d'entrée (createRoot)
   App.tsx                       état global + mise en page « scrollytelling » (5 sections)
   index.css                     Tailwind + classes utilitaires custom (.bento-card, .sticky-glass-dock, .bento-section…)
-  data/demographics.ts          TOUTES les données et le moteur de calcul
+  config.ts                     TOUS les paramètres (défauts, presets, modèles, rendu) — sans dépendance interne
+  data/demographics.ts          données, bornes de dates dérivées des données et moteur de calcul
   components/
     ShinyHeader.tsx             en-tête / dock de navigation, exporte le type ScrollySectionId
     ControlDock.tsx             ControlDock (sur la scène 3D) + BentoComparatorSection (grille bento)
@@ -48,6 +49,15 @@ index.html, vite.config.ts, tsconfig.json
 
 L'alias `@` pointe sur la **racine du dépôt** (pas `src/`) : `@/src/...`.
 
+## Pas de valeurs en dur
+
+Ne pas écrire de littéral métier dans les composants. Sources uniques :
+
+- **`src/config.ts`** : `REFERENCE_YEAR` (année courante, `new Date().getFullYear()`), état initial (`DEFAULT_BIRTH_YEAR`, `DEFAULT_COMPARED_NAMES`), presets générationnels (`GENERATION_PRESETS`), paramètres du modèle de prénom (`NAME_MODEL`), des courbes de survie (`SURVIVAL_CHART`) et du rendu 3D (`SCENE_RENDER`).
+- **`src/data/demographics.ts`** : `MIN_BIRTH_YEAR` / `MAX_BIRTH_YEAR` (**dérivés des clés de `INSER_COHORTS`** : ajouter une cohorte étend automatiquement les sélecteurs), `BIRTH_DECADES`, `clampBirthYear()`, `ageFromBirthYear()`, types `SocioProfile`.
+- Libellés « en {REFERENCE_YEAR} » : utiliser la constante, jamais `2026`.
+- Classes Tailwind conditionnelles : stocker des chaînes **complètes** dans la config (ex. `titleClass`), jamais de concaténation (`text-${color}-400`), sinon Tailwind ne les détecte pas au build.
+
 ## Architecture et flux de données
 
 - `App.tsx` possède l'état : `namesList` (le premier = prénom de l'utilisateur), `userPrimaryName`, `birthYear`, `gender`, `selectedIndex`, `viewMode`, `isAutoRotate`, `cameraTrigger`, `activeSection`. Il calcule `computedStatsList = namesList.map(computeNameStats)` via `useMemo` et le passe aux enfants par props (pas de store externe, pas de contexte).
@@ -57,11 +67,11 @@ L'alias `@` pointe sur la **racine du dépôt** (pas `src/`) : `@/src/...`.
 
 ### `src/data/demographics.ts`
 
-- `INSER_COHORTS` (nom historique avec la faute « INSER », conservé : ne pas renommer sans mettre à jour tous les usages) : points tous les 5 ans (+2024), interpolés linéairement par `getCohortLifeStats(year)`.
+- `INSER_COHORTS` (nom historique avec la faute « INSER », conservé : ne pas renommer sans mettre à jour tous les usages) : points tous les 5 ans (+ dernière année), interpolés linéairement par `getCohortLifeStats(year)`. Ses clés définissent la plage d'années de l'application.
 - `FAMOUS_NAMES_DATABASE` : clé = prénom **normalisé** (`cleanName` : sans accents, minuscules). `HISTORICAL_TOP_NAMES_BY_YEAR` / `getTopNamesForYear` : palmarès.
-- `computeNameStats(name, birthYear, forcedGender?)` : pour un prénom connu, utilise `lifeExpectancyDelta` / `mortalityHazardRatio` de la base ; sinon, **modèle de repli déterministe** basé sur un hash du prénom (résultat reproductible, `isCustomEstimated: true`). Survie ajustée = `survie_cohorte ^ hazardRatio`, bornée à [0.1 %, 99.9 %].
+- `computeNameStats(name, birthYear, forcedGender?)` : pour un prénom connu, utilise `lifeExpectancyDelta` / `mortalityHazardRatio` de la base ; sinon, **modèle de repli déterministe** basé sur un hash du prénom (résultat reproductible, `isCustomEstimated: true`). Survie ajustée = `survie_cohorte ^ hazardRatio` (`adjustSurvivalRate`), bornée par `NAME_MODEL.survivalBounds`.
 - Ajouter un prénom : nouvelle entrée `NameRecord` (clé normalisée) avec `peakDecade`, `socioProfile`, `mortalityHazardRatio`, `lifeExpectancyDelta`, `famousPeople`, `colorHex`/`accentHex`. Les valeurs sont des estimations calibrées, pas des données brutes INSEE : le dire explicitement si on en invente de nouvelles.
-- Ne pas introduire de `Math.random()` / `Date.now()` dans les calculs : l'affichage doit rester reproductible.
+- Pas de `Math.random()` dans les calculs : le résultat doit être reproductible pour une année de référence donnée (seule `REFERENCE_YEAR` varie dans le temps, via l'âge).
 
 ## Rendu 3D — règles de performance (à respecter)
 
@@ -84,12 +94,11 @@ L'alias `@` pointe sur la **racine du dépôt** (pas `src/`) : `@/src/...`.
 
 ## Pièges connus
 
-- **Année courante codée en dur** : `2026` dans `computeNameStats` (`currentYear`), `ControlDock.tsx` (âge, libellés « Survie en 2026 ») et `ThreeDemographicScene.tsx` (étiquette). Les plages de naissance sont bornées à **1920–2024** (`min`/`max` des inputs, `Math.min(2024, …)`). Si l'on met à jour l'année de référence, le faire partout (`grep -rn "2026\|2024" src`).
 - **`vite.config.ts`** : le bloc `server.hmr` / `server.watch` (variable `DISABLE_HMR`) est imposé par l'environnement Google AI Studio — ne pas le modifier.
-- **Dépendances inutilisées** : `package.json` contient `@google/genai`, `express`, `dotenv`, `motion`, `tsx`, `autoprefixer` (et `.env.example` / `metadata.json` mentionnent Gemini) hérités du gabarit AI Studio ; rien dans `src/` ne les importe, et l'application n'a besoin d'aucune clé API. Ne pas ajouter de code serveur ni d'appel Gemini sans demande explicite.
-- `npm run clean` supprime `dist` et `server.js` (vestige du gabarit).
+- **Héritage AI Studio** : `.env.example` et `metadata.json` (mention de Gemini) viennent du gabarit AI Studio ; l'application n'a besoin d'aucune clé API. Ne pas ajouter de code serveur ni d'appel Gemini sans demande explicite.
+- **Données ≠ année de référence** : les taux de survie des cohortes (`INSER_COHORTS`) sont un instantané ; ils sont présentés « en {REFERENCE_YEAR} » par choix produit. Si l'on veut un affichage strictement fidèle aux données, introduire une constante d'année de données distincte.
 - Le dossier `.aistudio/` ne contient que des artefacts de génération (captures) : ne pas le modifier ni s'en servir comme source.
-- Seul `bun.lock` est versionné (pas de `package-lock.json`) ; ne pas committer de lockfile supplémentaire sans accord.
+- Seul `bun.lock` est versionné (pas de `package-lock.json`) : après un changement de dépendances, lancer `bun install` et committer `bun.lock` ; ne pas committer de lockfile npm.
 
 ## Déploiement
 

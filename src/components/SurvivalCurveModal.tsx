@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import { X, TrendingDown, Info, ShieldCheck, Calendar, ChevronLeft, ChevronRight } from 'lucide-react';
-import { ComputedNameStats } from '../data/demographics';
+import { ComputedNameStats, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR, ageFromBirthYear, clampBirthYear } from '../data/demographics';
+import { SURVIVAL_CHART } from '../config';
+
+const { focusLeadYears, yearJump, svg, model } = SURVIVAL_CHART;
 
 interface SurvivalCurveModalProps {
   names: ComputedNameStats[];
@@ -17,16 +20,15 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
   onClose,
   isInlineSection = false,
 }) => {
-  const currentAge = Math.max(0, 2026 - birthYear);
-  const focusMinAge = Math.max(0, currentAge - 5);
-  const maxAge = Math.max(105, currentAge + 10);
+  const currentAge = ageFromBirthYear(birthYear);
+  const focusMinAge = Math.max(0, currentAge - focusLeadYears);
+  const maxAge = Math.max(SURVIVAL_CHART.minMaxAge, currentAge + SURVIVAL_CHART.maxAgeMargin);
 
   const [isFocusedRange, setIsFocusedRange] = useState<boolean>(true);
   const [hoveredAge, setHoveredAge] = useState<number | null>(null);
-  const clampYear = (y: number) => Math.min(2024, Math.max(1920, y));
 
   const minAge = isFocusedRange ? focusMinAge : 0;
-  const ageSpan = Math.max(10, maxAge - minAge);
+  const ageSpan = Math.max(SURVIVAL_CHART.minAgeSpan, maxAge - minAge);
 
   // Generate 1-year resolution survival curve points from minAge to maxAge
   // Standard Gompertz-Makeham mortality model parameterized by cohort life tables & hazard ratio
@@ -34,17 +36,15 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
 
   const getSurvivalAtAge = (age: number, lifeExp: number, hazardRatio: number): number => {
     if (age <= 0) return 100;
-    const theta = lifeExp + 3;
-    const beta = 7.8;
+    const theta = lifeExp + model.thetaOffset;
+    const beta = model.beta;
     const standardCumHazard = Math.pow(age / theta, beta);
     const s = Math.exp(-standardCumHazard * hazardRatio);
     return Math.round(s * 1000) / 10;
   };
 
   // SVG Chart Dimensions
-  const svgWidth = 720;
-  const svgHeight = 330;
-  const padding = { top: 34, right: 36, bottom: 46, left: 55 };
+  const { width: svgWidth, height: svgHeight, padding } = svg;
   const chartW = svgWidth - padding.left - padding.right;
   const chartH = svgHeight - padding.top - padding.bottom;
 
@@ -52,7 +52,8 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
   const yScale = (pct: number) => padding.top + ((100 - pct) / 100) * chartH;
 
   // Compute clean X-axis ticks starting from minAge up to maxAge
-  const tickStep = ageSpan <= 65 ? 5 : 10;
+  const tickStep =
+    ageSpan <= SURVIVAL_CHART.tickStep.fineMaxSpan ? SURVIVAL_CHART.tickStep.fine : SURVIVAL_CHART.tickStep.coarse;
   const xTicks: number[] = [minAge];
   const firstRoundTick = Math.ceil((minAge + 1) / tickStep) * tickStep;
   for (let t = firstRoundTick; t <= maxAge; t += tickStep) {
@@ -114,7 +115,7 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
               Trajectoires de Survie par Prénom • Cohorte {birthYear}
             </h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              Zoom sur l’horizon de vie depuis {minAge} ans (aujourd’hui - 5 ans) jusqu’à {maxAge} ans (Tables Insee & Coulmont)
+              Zoom sur l’horizon de vie depuis {minAge} ans (aujourd’hui - {focusLeadYears} ans) jusqu’à {maxAge} ans (Tables Insee & Coulmont)
             </p>
           </div>
 
@@ -125,44 +126,44 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
               <span className="text-xs text-slate-400">Année :</span>
               <button
                 type="button"
-                onClick={() => setBirthYear(clampYear(birthYear - 5))}
+                onClick={() => setBirthYear(clampBirthYear(birthYear - yearJump))}
                 className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 tabular-nums"
-                title="-5 ans"
+                title={`-${yearJump} ans`}
               >
-                -5
+                -{yearJump}
               </button>
               <button
                 type="button"
-                onClick={() => setBirthYear(clampYear(birthYear - 1))}
+                onClick={() => setBirthYear(clampBirthYear(birthYear - 1))}
                 className="p-0.5 rounded hover:bg-slate-800 text-slate-300"
               >
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
               <input
                 type="number"
-                min={1920}
-                max={2024}
+                min={MIN_BIRTH_YEAR}
+                max={MAX_BIRTH_YEAR}
                 value={birthYear}
                 onChange={(e) => {
                   const val = Number(e.target.value);
-                  if (!Number.isNaN(val)) setBirthYear(clampYear(val));
+                  if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val));
                 }}
                 className="w-16 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-xs font-bold text-center text-sky-400 tabular-nums"
               />
               <button
                 type="button"
-                onClick={() => setBirthYear(clampYear(birthYear + 1))}
+                onClick={() => setBirthYear(clampBirthYear(birthYear + 1))}
                 className="p-0.5 rounded hover:bg-slate-800 text-slate-300"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
-                onClick={() => setBirthYear(clampYear(birthYear + 5))}
+                onClick={() => setBirthYear(clampBirthYear(birthYear + yearJump))}
                 className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 tabular-nums"
-                title="+5 ans"
+                title={`+${yearJump} ans`}
               >
-                +5
+                +{yearJump}
               </button>
             </div>
 
@@ -188,7 +189,7 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
                   Taux de survie cumulé (%) de {minAge} à {maxAge} ans
                 </span>
                 <span className="text-[11px] text-sky-400 font-medium">
-                  · Référence : {currentAge} ans {isFocusedRange ? `(-5 ans)` : `(depuis 0 an)`}
+                  · Référence : {currentAge} ans {isFocusedRange ? `(-${focusLeadYears} ans)` : `(depuis 0 an)`}
                 </span>
               </div>
 
