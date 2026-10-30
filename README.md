@@ -72,6 +72,53 @@ Le job de production publie le dossier `dist/` sur Cloudflare Pages, projet `pre
 - `CLOUDFLARE_API_TOKEN` : droit Cloudflare Pages sur le compte concerné ;
 - `CLOUDFLARE_ACCOUNT_ID` : identifiant du compte.
 
+### Configurer les secrets avec GitHub CLI
+
+Installer [GitHub CLI (`gh`)](https://cli.github.com/) et utiliser un compte administrateur du dépôt. Créer un jeton dans [Cloudflare → API Tokens](https://dash.cloudflare.com/profile/api-tokens) avec la permission **Account → Cloudflare Pages → Edit**, limitée au compte qui héberge le projet. L'identifiant du compte se trouve dans le tableau de bord Cloudflare du compte concerné, sous **Account ID** ; ce n'est pas le Zone ID d'un domaine.
+
+Dans un terminal interactif, exécuter les blocs suivants. `gh secret set` ouvre lui-même une invite de saisie masquée : coller la valeur demandée, puis valider avec Entrée. Les valeurs ne figurent ni dans les commandes ni dans l'historique du shell.
+
+```bash
+# Se connecter à GitHub si nécessaire
+gh auth status || gh auth login
+
+# Créer l'environnement du déploiement s'il n'existe pas encore
+gh api repos/azman0101/prenom-esperance-de-vie/environments/production --silent || \
+  gh api --method PUT \
+    repos/azman0101/prenom-esperance-de-vie/environments/production \
+    --silent
+```
+
+```bash
+# Invite masquée : coller le jeton Cloudflare
+gh secret set CLOUDFLARE_API_TOKEN \
+  --repo azman0101/prenom-esperance-de-vie \
+  --env production
+
+# Invite masquée : coller l'identifiant du compte Cloudflare
+gh secret set CLOUDFLARE_ACCOUNT_ID \
+  --repo azman0101/prenom-esperance-de-vie \
+  --env production
+
+# Vérifier les noms des deux secrets enregistrés (sans afficher leurs valeurs)
+gh secret list \
+  --repo azman0101/prenom-esperance-de-vie \
+  --env production
+```
+
+Le projet Cloudflare Pages `prenom-esperance-de-vie` doit exister dans ce compte et utiliser `main` comme branche de production. Une fois le workflow présent sur `main`, lancer une actualisation et un déploiement manuels :
+
+```bash
+gh workflow run refresh-data.yml \
+  --repo azman0101/prenom-esperance-de-vie \
+  --ref main
+
+gh run list \
+  --repo azman0101/prenom-esperance-de-vie \
+  --workflow refresh-data.yml \
+  --limit 5
+```
+
 Les jobs n'ont pas de droit d'écriture sur le dépôt. Un échec d'import, de test, de schéma ou de build bloque le déploiement : la version en ligne précédente reste servie. Un modèle non validé autorise la publication des observations et de la référence nationale, sans effet prénom. Les anciennes versions Cloudflare et les artefacts permettent le retour à une version précédente.
 
 Les fichiers bruts restent en cache de traitement. Un snapshot agrégé conservé avec l'artefact permet de reproduire l'affichage, même si les sources en ligne sont révisées. La reconstruction statistique exacte exige également les fichiers bruts portant les empreintes du manifeste.
