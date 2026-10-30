@@ -1,0 +1,6 @@
+{
+  "name": "Prénoms & Longévité 3D - Observatoire Démographique",
+  "description": "Visualisation interactive 3D et analytique de la popularité, cohorte de naissance, mortalité et espérance de vie selon les prénoms d'après les travaux sociologiques et données démographiques.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
