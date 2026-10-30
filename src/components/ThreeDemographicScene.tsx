@@ -501,14 +501,19 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
   }, []);
 
   const rebuildMonoliths = (namesList: ComputedNameStats[], targetScene: THREE.Scene) => {
-    // Dispose old monoliths
+    // Dispose old monoliths & their procedural textures
     monolithGroupsRef.current.forEach((grp) => {
       targetScene.remove(grp);
       grp.traverse((child) => {
         if (child instanceof THREE.Mesh) {
           child.geometry.dispose();
-          if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
-          else child.material.dispose();
+          const disposeMat = (m: THREE.Material) => {
+            const stdMat = m as THREE.MeshStandardMaterial;
+            if (stdMat.map) stdMat.map.dispose();
+            m.dispose();
+          };
+          if (Array.isArray(child.material)) child.material.forEach(disposeMat);
+          else disposeMat(child.material);
         }
       });
     });
@@ -548,6 +553,65 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
 };
 
 /**
+ * Helper to draw a crisp popularity trend icon (TrendingUp / TrendingDown / Stable) on a 2D Canvas
+ */
+function drawCanvasTrendIcon(
+  ctx: CanvasRenderingContext2D,
+  trend: 'up' | 'down' | 'stable',
+  cx: number,
+  cy: number,
+  size: number,
+  color: string
+) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = Math.max(3, size * 0.14);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  const half = size * 0.42;
+  if (trend === 'up') {
+    // Polyline rising up-right (like Lucide TrendingUp)
+    ctx.beginPath();
+    ctx.moveTo(cx - half, cy + half * 0.65);
+    ctx.lineTo(cx - half * 0.15, cy - half * 0.2);
+    ctx.lineTo(cx + half * 0.25, cy + half * 0.2);
+    ctx.lineTo(cx + half, cy - half * 0.65);
+    ctx.stroke();
+
+    // Arrowhead at top-right
+    ctx.beginPath();
+    ctx.moveTo(cx + half * 0.35, cy - half * 0.65);
+    ctx.lineTo(cx + half, cy - half * 0.65);
+    ctx.lineTo(cx + half, cy - half * 0.0);
+    ctx.stroke();
+  } else if (trend === 'down') {
+    // Polyline falling down-right (like Lucide TrendingDown)
+    ctx.beginPath();
+    ctx.moveTo(cx - half, cy - half * 0.65);
+    ctx.lineTo(cx - half * 0.15, cy + half * 0.2);
+    ctx.lineTo(cx + half * 0.25, cy - half * 0.2);
+    ctx.lineTo(cx + half, cy + half * 0.65);
+    ctx.stroke();
+
+    // Arrowhead at bottom-right
+    ctx.beginPath();
+    ctx.moveTo(cx + half * 0.35, cy + half * 0.65);
+    ctx.lineTo(cx + half, cy + half * 0.65);
+    ctx.lineTo(cx + half, cy + half * 0.0);
+    ctx.stroke();
+  } else {
+    // Horizontal stable line
+    ctx.beginPath();
+    ctx.moveTo(cx - half * 0.8, cy);
+    ctx.lineTo(cx + half * 0.8, cy);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/**
  * Creates a Composite 3–12 Part Procedural Model (THREE.Group) for a name
  * Strict Three.js Skill Compliance:
  * - 3–12 parts across primary silhouette, secondary read, and accent detail
@@ -573,6 +637,16 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   const remainingHeight = Math.max(0.6, totalHeight - livedHeight);
 
   const baseColor = new THREE.Color(item.colorHex);
+
+  // Trend styling metadata
+  const trendColorHex =
+    item.popularityTrend === 'up'
+      ? '#34d399'
+      : item.popularityTrend === 'down'
+      ? '#fb7185'
+      : '#94a3b8';
+  const trendSign = item.popularityDeltaPercent > 0 ? '+' : '';
+  const trendDeltaText = `${trendSign}${item.popularityDeltaPercent}% vs ${item.birthYear - 1}`;
 
   // 1. Part 1: Soft Radial Contact Shadow Grounding Disc (flush with ground at y=0.01)
   const shadowCanvas = document.createElement('canvas');
@@ -624,7 +698,7 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   brassRingMesh.position.y = 0.52;
   group.add(brassRingMesh);
 
-  // 4. Part 4: Engraved Brass Label Plaque on Plinth
+  // 4. Part 4: Engraved Brass Label Plaque on Plinth (with Trend Badge)
   const plaqueCanvas = document.createElement('canvas');
   plaqueCanvas.width = 512;
   plaqueCanvas.height = 128;
@@ -635,13 +709,17 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   pctx.lineWidth = 6;
   pctx.strokeRect(6, 6, 500, 116);
   pctx.fillStyle = '#ffffff';
-  pctx.font = 'bold 44px sans-serif';
+  pctx.font = 'bold 40px sans-serif';
   pctx.textAlign = 'center';
   pctx.textBaseline = 'middle';
-  pctx.fillText(`${item.queryName} (${item.birthYear})`, 256, 50);
-  pctx.font = '28px sans-serif';
+  pctx.fillText(`${item.queryName} (${item.birthYear})`, 235, 46);
+
+  // Draw trend icon on right of plaque header
+  drawCanvasTrendIcon(pctx, item.popularityTrend, 445, 46, 34, trendColorHex);
+
+  pctx.font = 'bold 25px sans-serif';
   pctx.fillStyle = '#fef08a';
-  pctx.fillText(`Espérance : ${item.adjustedLifeExpectancy} ans`, 256, 92);
+  pctx.fillText(`Esp. ${item.adjustedLifeExpectancy} ans · Pop. ${trendSign}${item.popularityDeltaPercent}%`, 256, 94);
 
   const plaqueTex = new THREE.CanvasTexture(plaqueCanvas);
   plaqueTex.colorSpace = THREE.SRGBColorSpace;
@@ -656,7 +734,6 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   group.add(plaqueMesh);
 
   // 5. Part 5: Fluted Demographic Pillar Body (Lived Years Shaft - Primary Silhouette)
-  // Procedural fluted surface roughness map
   const shaftGeo = new THREE.CylinderGeometry(1.15, 1.3, livedHeight, 32);
   const shaftMat = new THREE.MeshStandardMaterial({
     color: baseColor,
@@ -737,47 +814,102 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   group.add(haloMesh);
   group.userData.haloMesh = haloMesh;
 
-  // 10. Part 10: High-Fidelity 3D Billboard Label Floating Above Peak
+  // 10. Part 10: 3D Sculpted Popularity Trend Emblem on Pillar Front (Accent Detail)
+  const trendThreeColor = new THREE.Color(trendColorHex);
+  const trendEmblemMat = new THREE.MeshStandardMaterial({
+    color: trendThreeColor,
+    emissive: trendThreeColor,
+    emissiveIntensity: 0.45,
+    roughness: 0.2,
+    metalness: 0.7,
+  });
+
+  const trendEmblemGroup = new THREE.Group();
+  if (item.popularityTrend === 'up' || item.popularityTrend === 'down') {
+    const coneGeo = new THREE.ConeGeometry(0.24, 0.38, 16);
+    const stemGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.28, 12);
+    const coneMesh = new THREE.Mesh(coneGeo, trendEmblemMat);
+    const stemMesh = new THREE.Mesh(stemGeo, trendEmblemMat);
+    if (item.popularityTrend === 'up') {
+      coneMesh.position.y = 0.16;
+      stemMesh.position.y = -0.12;
+    } else {
+      coneMesh.rotation.z = Math.PI;
+      coneMesh.position.y = -0.16;
+      stemMesh.position.y = 0.12;
+    }
+    trendEmblemGroup.add(coneMesh, stemMesh);
+  } else {
+    const barGeo = new THREE.BoxGeometry(0.42, 0.12, 0.12);
+    const barMesh = new THREE.Mesh(barGeo, trendEmblemMat);
+    trendEmblemGroup.add(barMesh);
+  }
+  trendEmblemGroup.position.set(0, 0.55 + livedHeight * 0.5, 1.32);
+  group.add(trendEmblemGroup);
+
+  // 11. Part 11: High-Fidelity 3D Billboard Label Floating Above Peak (with Popularity Trend Row)
   const labelCanvas = document.createElement('canvas');
   labelCanvas.width = 512;
-  labelCanvas.height = 256;
+  labelCanvas.height = 300;
   const lctx = labelCanvas.getContext('2d')!;
 
   // Stylized rounded badge
-  lctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-  lctx.roundRect ? lctx.roundRect(16, 16, 480, 224, 28) : lctx.fillRect(16, 16, 480, 224);
+  lctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
+  lctx.roundRect ? lctx.roundRect(14, 14, 484, 272, 28) : lctx.fillRect(14, 14, 484, 272);
   lctx.fill();
 
   lctx.strokeStyle = item.colorHex;
   lctx.lineWidth = 6;
   lctx.stroke();
 
-  // Name header
+  // Name header + inline trend icon
   lctx.fillStyle = '#ffffff';
-  lctx.font = 'bold 50px sans-serif';
+  lctx.font = 'bold 46px sans-serif';
   lctx.textAlign = 'center';
-  lctx.fillText(item.queryName, 256, 75);
+  lctx.fillText(item.queryName, 234, 68);
+  drawCanvasTrendIcon(lctx, item.popularityTrend, 412, 54, 40, trendColorHex);
 
   // Life expectancy KPI
-  lctx.font = 'bold 42px sans-serif';
+  lctx.font = 'bold 38px sans-serif';
   lctx.fillStyle = '#38bdf8';
-  lctx.fillText(`${item.adjustedLifeExpectancy} ans`, 256, 135);
+  lctx.fillText(`${item.adjustedLifeExpectancy} ans`, 256, 122);
 
   // Survival indicator
-  lctx.font = '30px sans-serif';
+  lctx.font = '28px sans-serif';
   lctx.fillStyle = item.adjustedSurvivalRate >= 90 ? '#4ade80' : item.adjustedSurvivalRate >= 70 ? '#fbbf24' : '#f87171';
-  lctx.fillText(`Survie en 2026 : ${item.adjustedSurvivalRate}%`, 256, 185);
+  lctx.fillText(`Survie en 2026 : ${item.adjustedSurvivalRate}%`, 256, 168);
+
+  // Popularity trend pill inside 3D billboard
+  const pillBg =
+    item.popularityTrend === 'up'
+      ? 'rgba(16, 185, 129, 0.18)'
+      : item.popularityTrend === 'down'
+      ? 'rgba(244, 63, 94, 0.18)'
+      : 'rgba(148, 163, 184, 0.18)';
+  lctx.fillStyle = pillBg;
+  lctx.roundRect ? lctx.roundRect(56, 194, 400, 62, 16) : lctx.fillRect(56, 194, 400, 62);
+  lctx.fill();
+  lctx.strokeStyle = trendColorHex;
+  lctx.lineWidth = 2.5;
+  lctx.stroke();
+
+  // Trend icon + percentage text inside the pill
+  drawCanvasTrendIcon(lctx, item.popularityTrend, 102, 225, 32, trendColorHex);
+  lctx.font = 'bold 27px sans-serif';
+  lctx.fillStyle = trendColorHex;
+  lctx.textAlign = 'left';
+  lctx.fillText(`Pop. ${trendDeltaText}`, 134, 234);
 
   const labelTex = new THREE.CanvasTexture(labelCanvas);
   labelTex.colorSpace = THREE.SRGBColorSpace;
-  const labelGeo = new THREE.PlaneGeometry(3.0, 1.5);
+  const labelGeo = new THREE.PlaneGeometry(3.1, 1.82);
   const labelMat = new THREE.MeshBasicMaterial({
     map: labelTex,
     transparent: true,
     side: THREE.DoubleSide,
   });
   const labelMesh = new THREE.Mesh(labelGeo, labelMat);
-  labelMesh.position.y = crystalTopY + 1.6;
+  labelMesh.position.y = crystalTopY + 1.75;
   group.add(labelMesh);
 
   return group;
