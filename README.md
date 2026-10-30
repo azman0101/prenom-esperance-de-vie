@@ -34,6 +34,8 @@ npm run dev
 
 L'import initial télécharge environ 660 Mo de décès et utilise jusqu'à 2 Go de mémoire DuckDB, avec débordement disque. Prévoir 10 Go d'espace temporaire. Les sources sont dans `.cache/data/`, ignoré par Git ; les ETag et dates HTTP permettent leur réutilisation. Les fichiers individuels ne sont jamais déployés.
 
+`python3 scripts/data/sync.py --stamp` affiche en quelques secondes une empreinte des sources amont (URL, ETag, dates, taille), sans les télécharger : deux empreintes identiques signifient que les sources n'ont pas changé. La CI s'en sert comme clé de cache.
+
 ```bash
 # Reconstruire depuis les mêmes sources conservées, sans réseau
 python3 scripts/data/sync.py --offline
@@ -41,7 +43,7 @@ python3 scripts/data/sync.py --offline
 npm run data:validate
 ```
 
-`public/data/` est généré, ignoré par Git et doit exister avant la publication du site. Il contient le manifeste, le palmarès annuel exact, un index des noms, les cohortes et un rapport de qualité. Le navigateur charge uniquement ces agrégats. Une absence de snapshot affiche un état d'erreur avec possibilité de réessayer, sans données simulées de secours.
+**Aucun snapshot n'est versionné dans Git.** `public/data/` est généré, ignoré par Git et doit exister avant le build (`npm run build` échoue sinon, par la vérification `prebuild`) : un déploiement par intégration Git de Cloudflare Pages ne fonctionnerait pas sans l'étape d'import ; la publication passe par GitHub Actions (voir plus bas). Chaque snapshot porte une `version` (hash des sources et du code de génération) et son manifeste enregistre la provenance : URL, empreintes SHA-256 et dates des sources. Il contient le manifeste, le palmarès annuel exact, les cohortes et un rapport de qualité. Le navigateur charge uniquement ces agrégats. Une absence de snapshot affiche un état d'erreur avec possibilité de réessayer, sans données simulées de secours.
 
 ## Calculs et limites
 
@@ -49,19 +51,17 @@ npm run data:validate
 
 Le rapprochement utilise premier prénom, sexe, année et lieu de naissance en France, avec retrait des oppositions et doublons. Les dates inconnues sont conservées à la résolution annuelle lorsque l'année est complète ; une date inconnue dans l'année partielle la plus récente ne peut pas être placée avant sa date d'arrêt. Les graphies restent distinctes pour le rang officiel ; les variantes accentuées sont regroupées pour le rapprochement, avec leur dénominateur explicite.
 
-La survie estimée vaut `1 − décès cumulés / naissances`. Elle est indisponible avant 1970, pour moins de 100 naissances regroupées ou pour un décompte incohérent. Les fichiers de 1970–1975 présentent des lacunes. Une absence de naissance publiée ne vaut jamais zéro. Changements de prénom, migrations, délais d'enregistrement, géographie et arrondis peuvent biaiser cet indicateur ; il ne certifie aucun statut vital individuel.
+La survie estimée vaut `1 − décès cumulés / naissances`. Elle est indisponible avant le début de couverture des décès (lu dans les métadonnées de la source, 1970 pour l'extraction actuelle), pour moins de 100 naissances regroupées ou pour un décompte incohérent. Les premières années de couverture (1970–1975 aujourd'hui) présentent des lacunes. Une absence de naissance publiée ne vaut jamais zéro. Changements de prénom, migrations, délais d'enregistrement, géographie et arrondis peuvent biaiser cet indicateur ; il ne certifie aucun statut vital individuel.
 
 ### Projection
 
-Le modèle binomial agrégé à lien complémentaire log-log emploie les quotients nationaux comme offset, un effet prénom/sexe et une déviation par décennie, régularisés par ridge. L'apprentissage utilise les cohortes à partir de 1976, les années couvertes par les quotients nationaux et uniquement des années complètes de décès.
+La projection est la **référence nationale de l'INSEE par âge et par sexe**, sans effet propre au prénom : elle est donc identique pour tous les prénoms de même sexe et de même cohorte. Seules les observations (survie estimée à partir des décès enregistrés, naissances, rang) distinguent les prénoms.
 
-La pénalité est choisie parmi 1, 10 et 100 sur trois validations chronologiques de deux années : 2020–2021, 2022–2023 et 2024–2025 pour les données actuelles. Les fenêtres avancent avec la dernière année complète de calibration. L'ajustement n'est publié que si le gain moyen de log-vraisemblance prédictive atteint 1 %. Chaque groupe exige en outre 1 000 naissances de calibration et 20 décès. Sinon : **référence INSEE seule**. Ces fenêtres servent à sélectionner et valider chaque version, sans prétendre constituer un test indépendant après sélection. Le rapport conserve leurs bornes et leurs scores.
+Un ajustement par prénom avait été étudié (modèle binomial log-log régularisé, validé chronologiquement sur les années récentes) ; il n'améliorait pas la prédiction de façon significative sur les données actuelles et a été retiré plutôt que conservé inactif. Il reste consultable dans l'historique Git.
 
-Les intervalles à 95 % utilisent l'approximation de Laplace de la vraisemblance pénalisée avec sensibilité à l'arrondi du dénominateur. Ils ne couvrent ni tous les biais de source ni la dispersion des durées de vie individuelles.
+La projection maintient constants les quotients de la dernière année publiée. Les quotients DEC3 (âge atteint dans l'année) sont convertis en âges révolus par interpolation des hazards à demi-année ; l'année de naissance reçoit un traitement distinct. Après le dernier âge détaillé, une queue exponentielle est calibrée sur l'espérance résiduelle officielle. Les espérances de référence doivent être reproduites à 0,2 an près. Les années restantes sont l'intégrale de survie **conditionnelle à l'âge actuel**, pas `e0 − âge`. L'âge moyen projeté est l'âge actuel plus cette espérance résiduelle.
 
-La projection maintient constants les quotients de la dernière année publiée et le facteur de risque estimé au prénom. Les quotients DEC3 (âge atteint dans l'année) sont convertis en âges révolus par interpolation des hazards à demi-année ; l'année de naissance reçoit un traitement distinct. Après le dernier âge détaillé, une queue exponentielle est calibrée sur l'espérance résiduelle officielle. Les espérances de référence doivent être reproduites à 0,2 an près. Les années restantes sont l'intégrale de survie **conditionnelle à l'âge actuel**, pas `e0 − âge`. L'âge moyen projeté est l'âge actuel plus cette espérance résiduelle.
-
-Le backtest ne valide pas l'extrapolation aux âges futurs non observables. Le prénom est un marqueur statistique, jamais une cause biologique. Les profils sociaux automatiques et personnages célèbres inventés ont été supprimés. Voir aussi l'[explication de l'INSEE sur l'espérance de vie](https://blog.insee.fr/l-esperance-de-vie-un-calcul-fictif-mais-tres-utile-v2025/).
+Le prénom est un marqueur statistique, jamais une cause biologique. Les profils sociaux automatiques et personnages célèbres inventés ont été supprimés. Voir aussi l'[explication de l'INSEE sur l'espérance de vie](https://blog.insee.fr/l-esperance-de-vie-un-calcul-fictif-mais-tres-utile-v2025/).
 
 ## Actualisation et publication
 
@@ -119,7 +119,17 @@ gh run list \
   --limit 5
 ```
 
-Les jobs n'ont pas de droit d'écriture sur le dépôt. Un échec d'import, de test, de schéma ou de build bloque le déploiement : la version en ligne précédente reste servie. Un modèle non validé autorise la publication des observations et de la référence nationale, sans effet prénom. Les anciennes versions Cloudflare et les artefacts permettent le retour à une version précédente.
+Les jobs n'ont pas de droit d'écriture sur le dépôt. Un échec d'import, de test, de schéma ou de build bloque le déploiement : la version en ligne précédente reste servie. Les anciennes versions Cloudflare et les artefacts permettent le retour à une version précédente.
+
+### Cache de la CI
+
+L'import complet est long (plusieurs dizaines de minutes) ; la CI l'évite quand rien n'a changé :
+
+1. Elle calcule l'empreinte des sources amont (`sync.py --stamp`, quelques secondes, sans téléchargement).
+2. Le snapshot est mis en cache sous la clé `snapshot-<hash de scripts/data>-<empreinte des sources>`. Sur un succès, l'import est sauté ; le snapshot restauré est quand même revalidé, compilé et testé.
+3. Sinon, les sources brutes (`.cache/data`) sont restaurées depuis le cache le plus récent pour ne télécharger que ce qui a changé, puis le snapshot est recalculé.
+
+Un cache créé sur `main` est lu par toutes les PR, tandis que celui d'une PR n'est lu que par cette PR. Les exécutions de `main` et du lundi gardent donc le cache chaud : une PR qui ne touche pas à `scripts/data/` réutilise le snapshot de `main` et ne refait pas l'import. Une PR qui modifie `scripts/data/` doit au contraire le recalculer, puisque le code de génération a changé. Les sources brutes ne sont écrites dans le cache que hors PR, pour ne pas évincer celles de `main`. La case « Reconstruire le snapshot » du lancement manuel force un recalcul.
 
 Les fichiers bruts restent en cache de traitement. Un snapshot agrégé conservé avec l'artefact permet de reproduire l'affichage, même si les sources en ligne sont révisées. La reconstruction statistique exacte exige également les fichiers bruts portant les empreintes du manifeste.
 
