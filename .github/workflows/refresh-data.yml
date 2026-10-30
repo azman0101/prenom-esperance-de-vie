@@ -1,0 +1,117 @@
+name: Actualiser les données officielles
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Reconstruire le snapshot même si les sources amont sont inchangées
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      [
+        'src/**',
+        'scripts/**',
+        'tests/**',
+        'package.json',
+        'bun.lock',
+        '.github/workflows/refresh-data.yml',
+      ]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: official-data-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/data/requirements.txt
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r scripts/data/requirements.txt
+      - run: bun install --frozen-lockfile
+      - run: npm run test:data && npm test && npm run lint
+      # Le snapshot est une fonction pure des sources amont et du code de scripts/data :
+      # tant que ni l'un ni l'autre ne change, on le restaure au lieu de le recalculer.
+      # Un cache créé sur la branche par défaut est lisible par toutes les PR ; celui d'une
+      # PR n'est lisible que par elle. Les runs de `main` et du lundi le gardent donc au chaud.
+      - name: Empreinte des sources amont (sans téléchargement)
+        id: stamp
+        run: echo "value=$(python3 scripts/data/sync.py --stamp --cache .cache/stamp)" >> "$GITHUB_OUTPUT"
+      - name: Restaurer le snapshot s'il est à jour
+        id: snapshot
+        uses: actions/cache@v4
+        with:
+          path: public/data
+          key: snapshot-${{ hashFiles('scripts/data/*.py', 'scripts/data/requirements.txt') }}-${{ steps.stamp.outputs.value }}${{ inputs.force && format('-{0}', github.run_id) || '' }}
+      - name: Restaurer les sources brutes
+        id: sources
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/data
+          key: sources-${{ steps.stamp.outputs.value }}
+          restore-keys: sources-
+      - name: Acquérir et calculer le snapshot
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        run: npm run data:sync
+      - name: Conserver les sources brutes (hors PR, pour ne pas évincer les caches de main)
+        if: steps.snapshot.outputs.cache-hit != 'true' && steps.sources.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/data
+          key: sources-${{ steps.stamp.outputs.value }}
+      - run: npm run data:validate
+      - run: npm run build
+      - name: Vérifier le site dans Chrome
+        run: npm run test:browser
+        env:
+          CHROME_BIN: google-chrome
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-et-snapshot-${{ github.run_id }}
+          path: dist
+          retention-days: 90
+      - name: Résumé de validation
+        run: |
+          python3 - <<'PY'
+          import json, os
+          m = json.load(open('public/data/manifest.json'))
+          origin = 'restauré du cache' if os.environ['SNAPSHOT_CACHE'] == 'true' else 'reconstruit'
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(f"Snapshot {m['version']} ({origin}) — naissances jusqu’à {max(m['birthYears'])}, décès au {m['deathsThrough']}.\n")
+          PY
+        env:
+          SNAPSHOT_CACHE: ${{ steps.snapshot.outputs.cache-hit }}
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site-et-snapshot-${{ github.run_id }}
+          path: dist
+      - name: Publication atomique Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=prenom-esperance-de-vie --branch=main
