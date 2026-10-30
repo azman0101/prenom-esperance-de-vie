@@ -365,12 +365,9 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
       }
       controls.update();
 
-      // Gentle floating animation of particles
-      const positions = particleGeo.attributes.position.array as Float32Array;
-      for (let i = 0; i < particleCount; i++) {
-        positions[i * 3 + 1] += Math.sin(time * 0.8 + i) * 0.01;
-      }
-      particleGeo.attributes.position.needsUpdate = true;
+      // GPU-friendly ambient floating motion (no buffer re-uploads to GPU)
+      particleSystem.rotation.y = time * 0.03;
+      particleSystem.position.y = Math.sin(time * 0.5) * 0.3;
 
       // Animate crystal beacons on monoliths
       monolithGroupsRef.current.forEach((group, idx) => {
@@ -394,13 +391,28 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
 
       renderer.render(scene, camera);
 
+      if (document.hidden) return;
+
       if (isSoftwareGl) afterDraw(tick);
       else frameId = requestAnimationFrame(tick);
     }
 
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        clock.getDelta(); // reset delta to prevent time jump
+        if (isSoftwareGl) afterDraw(tick);
+        else frameId = requestAnimationFrame(tick);
+      } else {
+        cancelAnimationFrame(frameId);
+        clearTimeout(frameId);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     tick();
 
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       window.removeEventListener('pointermove', handlePointerMove);

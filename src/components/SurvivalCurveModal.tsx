@@ -252,18 +252,24 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
 
             {/* Chart Legend */}
             <div className="flex flex-wrap items-center justify-center gap-4 mt-3 pt-3 border-t border-slate-800">
-              {names.map((item, idx) => (
-                <div key={idx} className="flex items-center gap-1.5 text-xs">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: item.colorHex }}
-                  />
-                  <span className="font-semibold text-white">{item.queryName}</span>
-                  <span className="text-slate-400">
-                    ({item.adjustedLifeExpectancy} ans • Survie actuelle : {item.adjustedSurvivalRate}%)
-                  </span>
-                </div>
-              ))}
+              {names.length === 0 ? (
+                <span className="text-xs text-slate-400 italic py-1">
+                  Aucun prénom sélectionné pour le tracé des courbes.
+                </span>
+              ) : (
+                names.map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 text-xs">
+                    <span
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: item.colorHex }}
+                    />
+                    <span className="font-semibold text-white">{item.queryName}</span>
+                    <span className="text-slate-400">
+                      ({item.adjustedLifeExpectancy} ans • Survie actuelle : {item.adjustedSurvivalRate}%)
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
@@ -287,7 +293,14 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 bg-slate-950">
-                  {names.map((item, idx) => {
+                  {names.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="py-6 text-center text-slate-400 italic">
+                        Aucun prénom dans le comparateur. Ajoutez des prénoms depuis l'interface pour voir les courbes comparatives.
+                      </td>
+                    </tr>
+                  ) : (
+                    names.map((item, idx) => {
                     const diff = item.adjustedLifeExpectancy - item.cohortLifeExpBaseline;
                     return (
                       <tr key={idx} className="hover:bg-slate-900/40 transition-colors">
@@ -322,7 +335,8 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
                         </td>
                       </tr>
                     );
-                  })}
+                  })
+                )}
                 </tbody>
               </table>
             </div>

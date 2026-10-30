@@ -9,19 +9,16 @@ import { MethodologyModal } from './components/MethodologyModal';
 import { computeNameStats, ComputedNameStats } from './data/demographics';
 
 export default function App() {
-  // Primary User Profile State
-  const [userPrimaryName, setUserPrimaryName] = useState('Stéphane');
-  const [birthYear, setBirthYear] = useState(1970);
-  const [gender, setGender] = useState<'M' | 'F' | 'X'>('M');
-
-  // Compared Names List (Defaults inspired by Coulmont's 1970 study cohort)
-  const [comparedNamesList, setComparedNamesList] = useState<string[]>([
+  // Authoritative Compared Names List
+  const [namesList, setNamesList] = useState<string[]>([
     'Stéphane',
     'Alexandre',
     'Kevin',
     'Sandrine',
   ]);
-
+  const [userPrimaryName, setUserPrimaryName] = useState('Stéphane');
+  const [birthYear, setBirthYear] = useState(1970);
+  const [gender, setGender] = useState<'M' | 'F' | 'X'>('M');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   // 3D Camera & Display State
@@ -34,57 +31,65 @@ export default function App() {
   const [isMethodologyOpen, setIsMethodologyOpen] = useState(false);
   const [isTopNamesOpen, setIsTopNamesOpen] = useState(false);
 
-  // Synchronize primary user name in compared list (first item)
-  const effectiveComparedList = useMemo(() => {
-    const trimmed = userPrimaryName.trim() || 'Stéphane';
-    const rest = comparedNamesList.filter(
-      (n, idx) => idx > 0 && n.toLowerCase() !== trimmed.toLowerCase()
-    );
-    return [trimmed, ...rest];
-  }, [userPrimaryName, comparedNamesList]);
-
   // Compute Actuarial & Demographic Data for all compared names
   const computedStatsList: ComputedNameStats[] = useMemo(() => {
-    return effectiveComparedList.map((name, idx) => {
+    return namesList.map((name, idx) => {
       // First name follows the user-selected gender, others use their natural gender
       const g = idx === 0 && gender !== 'X' ? gender : undefined;
       return computeNameStats(name, birthYear, g);
     });
-  }, [effectiveComparedList, birthYear, gender]);
+  }, [namesList, birthYear, gender]);
+
+  // Synchronize user primary name input with namesList[0]
+  const handleUserPrimaryNameChange = (newName: string) => {
+    setUserPrimaryName(newName);
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    setNamesList((prev) => {
+      if (prev.length === 0) return [trimmed];
+      const copy = [...prev];
+      copy[0] = trimmed;
+      return copy;
+    });
+  };
 
   // Handlers for adding/removing names
   const handleAddComparisonName = (rawName: string) => {
     const trimmed = rawName.trim();
     if (!trimmed) return;
-    if (effectiveComparedList.some((n) => n.toLowerCase() === trimmed.toLowerCase())) {
-      // Highlight existing
-      const existingIdx = effectiveComparedList.findIndex(
-        (n) => n.toLowerCase() === trimmed.toLowerCase()
-      );
+    const existingIdx = namesList.findIndex((n) => n.toLowerCase() === trimmed.toLowerCase());
+    if (existingIdx !== -1) {
       setSelectedIndex(existingIdx);
       return;
     }
-    const updated = [...effectiveComparedList, trimmed];
-    setComparedNamesList(updated);
+    const updated = [...namesList, trimmed];
+    setNamesList(updated);
+    if (updated.length === 1) {
+      setUserPrimaryName(trimmed);
+    }
     setSelectedIndex(updated.length - 1);
   };
 
   const handleRemoveComparisonName = (indexToRemove: number) => {
-    if (effectiveComparedList.length <= 1) return;
-    const updated = effectiveComparedList.filter((_, idx) => idx !== indexToRemove);
-    setComparedNamesList(updated);
+    const updated = namesList.filter((_, idx) => idx !== indexToRemove);
+    setNamesList(updated);
+    if (updated.length > 0) {
+      setUserPrimaryName(updated[0]);
+    } else {
+      setUserPrimaryName('');
+    }
     if (selectedIndex >= updated.length) {
-      setSelectedIndex(updated.length - 1);
+      setSelectedIndex(Math.max(0, updated.length - 1));
     }
   };
 
-  const handleApplyPreset = (names: string[], presetYear?: number) => {
-    if (names.length === 0) return;
+  const handleApplyPreset = (presetNames: string[], presetYear?: number) => {
+    if (presetNames.length === 0) return;
     if (presetYear !== undefined) {
       setBirthYear(presetYear);
     }
-    setUserPrimaryName(names[0]);
-    setComparedNamesList(names);
+    setUserPrimaryName(presetNames[0]);
+    setNamesList(presetNames);
     setSelectedIndex(0);
   };
 
@@ -123,7 +128,7 @@ export default function App() {
       <ControlDock
         names={computedStatsList}
         userPrimaryName={userPrimaryName}
-        setUserPrimaryName={setUserPrimaryName}
+        setUserPrimaryName={handleUserPrimaryNameChange}
         birthYear={birthYear}
         setBirthYear={setBirthYear}
         gender={gender}
@@ -155,7 +160,7 @@ export default function App() {
         <CohortTopNamesModal
           birthYear={birthYear}
           setBirthYear={setBirthYear}
-          currentlyCompared={effectiveComparedList}
+          currentlyCompared={namesList}
           onAddName={handleAddComparisonName}
           onApplyPreset={handleApplyPreset}
           onClose={() => setIsTopNamesOpen(false)}

@@ -109,7 +109,7 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                 className="w-2 h-2 rounded-full inline-block"
                 style={{ backgroundColor: selectedName?.colorHex || '#38bdf8' }}
               />
-              <span>Détails ({selectedName?.queryName})</span>
+              <span>Détails {selectedName ? `(${selectedName.queryName})` : ''}</span>
             </button>
             <button
               onClick={() => setActiveSubTab('profile')}
@@ -145,142 +145,173 @@ export const ControlDock: React.FC<ControlDockProps> = ({
 
           {/* Active Compared Name Pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto py-1 max-w-full">
-            {names.map((item, idx) => {
-              const isSelected = idx === selectedIndex;
-              return (
-                <div
-                  key={`${item.normalizedName}-${idx}`}
-                  onClick={() => {
-                    setSelectedIndex(idx);
-                    setActiveSubTab('details');
-                  }}
-                  className={`cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap ${
-                    isSelected
-                      ? 'bg-sky-950 text-white border-sky-500 shadow-sm'
-                      : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:border-slate-700'
-                  }`}
-                >
-                  <span
-                    className="w-2 h-2 rounded-full"
-                    style={{ backgroundColor: item.colorHex }}
-                  />
-                  <span>{item.queryName}</span>
-                  <span className="text-[10px] text-sky-400 font-bold">
-                    {item.adjustedLifeExpectancy}a
-                  </span>
-                  {names.length > 1 && (
+            {names.length === 0 ? (
+              <span className="text-xs text-slate-400 italic px-2 py-1">
+                Aucun prénom sélectionné
+              </span>
+            ) : (
+              names.map((item, idx) => {
+                const isSelected = idx === selectedIndex;
+                return (
+                  <div
+                    key={`${item.normalizedName}-${idx}`}
+                    onClick={() => {
+                      setSelectedIndex(idx);
+                      setActiveSubTab('details');
+                    }}
+                    className={`cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all whitespace-nowrap ${
+                      isSelected
+                        ? 'bg-sky-950 text-white border-sky-500 shadow-sm'
+                        : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    <span
+                      className="w-2 h-2 rounded-full"
+                      style={{ backgroundColor: item.colorHex }}
+                    />
+                    <span>{item.queryName}</span>
+                    <span className="text-[10px] text-sky-400 font-bold">
+                      {item.adjustedLifeExpectancy}a
+                    </span>
                     <button
+                      type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onRemoveComparisonName(idx);
                       }}
-                      className="text-slate-400 hover:text-red-400 ml-1"
-                      title="Retirer ce prénom"
+                      className="text-slate-400 hover:text-red-400 ml-1 p-0.5 rounded hover:bg-slate-800 transition-colors"
+                      title={`Supprimer ${item.queryName} du comparateur`}
+                      aria-label={`Supprimer ${item.queryName}`}
                     >
                       <X className="w-3 h-3" />
                     </button>
-                  )}
-                </div>
-              );
-            })}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
         {/* Tab 0: Detailed Actuarial Breakdown for Selected Name */}
-        {activeSubTab === 'details' && selectedName && (
-          <div className="pt-3 grid grid-cols-1 md:grid-cols-12 gap-3 items-center text-xs">
-            {/* Column 1: Identity, Interactive Year & Rank */}
-            <div className="md:col-span-3 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 truncate">
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{ backgroundColor: selectedName.colorHex }}
-                  />
-                  <h3 className="font-bold text-base text-white truncate">{selectedName.queryName}</h3>
+        {activeSubTab === 'details' && (
+          selectedName ? (
+            <div className="pt-3 grid grid-cols-1 md:grid-cols-12 gap-3 items-center text-xs">
+              {/* Column 1: Identity, Interactive Year & Rank */}
+              <div className="md:col-span-3 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 truncate">
+                    <span
+                      className="w-3 h-3 rounded-full shrink-0"
+                      style={{ backgroundColor: selectedName.colorHex }}
+                    />
+                    <h3 className="font-bold text-base text-white truncate">{selectedName.queryName}</h3>
+                  </div>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
+                    {selectedName.gender === 'F' ? 'Féminin' : selectedName.gender === 'M' ? 'Masculin' : 'Mixte'}
+                  </span>
                 </div>
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
-                  {selectedName.gender === 'F' ? 'Féminin' : selectedName.gender === 'M' ? 'Masculin' : 'Mixte'}
-                </span>
+
+                {/* Inline Birth Year Stepper */}
+                <div className="flex items-center justify-between gap-1.5 mt-1.5 bg-slate-950/90 px-2 py-1 rounded-lg border border-slate-800">
+                  <span className="text-[11px] text-slate-400">Né(e) en :</span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setBirthYear(Math.max(1920, birthYear - 1))}
+                      className="p-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white"
+                      title="Année précédente"
+                    >
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <input
+                      type="number"
+                      min={1920}
+                      max={2024}
+                      value={birthYear}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        if (!Number.isNaN(val)) setBirthYear(Math.min(2024, Math.max(1920, val)));
+                      }}
+                      className="w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[11px] font-bold text-center text-sky-400"
+                    />
+                    <button
+                      onClick={() => setBirthYear(Math.min(2024, birthYear + 1))}
+                      className="p-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white"
+                      title="Année suivante"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <span className="text-[10px] text-slate-400">({selectedName.currentAge}a)</span>
+                </div>
+
+                <div className="text-[11px] text-amber-300 mt-1 font-medium truncate">
+                  Rang en {selectedName.birthYear} : #{selectedName.rankInBirthYear} (~{selectedName.birthsEstimated.toLocaleString('fr-FR')} nais.)
+                </div>
               </div>
 
-              {/* Inline Birth Year Stepper */}
-              <div className="flex items-center justify-between gap-1.5 mt-1.5 bg-slate-950/90 px-2 py-1 rounded-lg border border-slate-800">
-                <span className="text-[11px] text-slate-400">Né(e) en :</span>
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setBirthYear(Math.max(1920, birthYear - 1))}
-                    className="p-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white"
-                    title="Année précédente"
-                  >
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <input
-                    type="number"
-                    min={1920}
-                    max={2024}
-                    value={birthYear}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      if (!Number.isNaN(val)) setBirthYear(Math.min(2024, Math.max(1920, val)));
-                    }}
-                    className="w-14 bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-[11px] font-bold text-center text-sky-400"
-                  />
-                  <button
-                    onClick={() => setBirthYear(Math.min(2024, birthYear + 1))}
-                    className="p-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white"
-                    title="Année suivante"
-                  >
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+              {/* Column 2: Life Expectancy & Survival Rate */}
+              <div className="md:col-span-4 grid grid-cols-2 gap-2">
+                <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Espérance de vie</div>
+                  <div className="text-lg font-extrabold text-white">
+                    {selectedName.adjustedLifeExpectancy} <span className="text-xs font-normal text-slate-400">ans</span>
+                  </div>
+                  <div className={`text-[10px] font-semibold mt-0.5 ${isPositiveDelta ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {isPositiveDelta ? `+${delta.toFixed(1)}` : delta.toFixed(1)} ans vs cohorte
+                  </div>
                 </div>
-                <span className="text-[10px] text-slate-400">({selectedName.currentAge}a)</span>
+                <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Survie à ce jour</div>
+                  <div className="text-lg font-extrabold text-emerald-400">
+                    {selectedName.adjustedSurvivalRate}%
+                  </div>
+                  <div className="text-[10px] text-slate-400 mt-0.5">
+                    Décès : {(100 - selectedName.adjustedSurvivalRate).toFixed(1)}%
+                  </div>
+                </div>
               </div>
 
-              <div className="text-[11px] text-amber-300 mt-1 font-medium truncate">
-                Rang en {selectedName.birthYear} : #{selectedName.rankInBirthYear} (~{selectedName.birthsEstimated.toLocaleString('fr-FR')} nais.)
+              {/* Column 3: Sociological Profile & Famous Figures */}
+              <div className="md:col-span-5 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-sky-400 mb-0.5">
+                  <span>{selectedName.socioTitle}</span>
+                  <span className="text-[10px] text-slate-400">HR : {selectedName.mortalityHazardRatio}</span>
+                </div>
+                <p className="text-[11px] text-slate-300 line-clamp-2">
+                  {selectedName.socioDescription}
+                </p>
+                {selectedName.famousPeople && selectedName.famousPeople.length > 0 && (
+                  <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1 truncate">
+                    <span className="text-amber-400">Illustres :</span>
+                    <span>{selectedName.famousPeople.map((p) => p.name).join(', ')}</span>
+                  </div>
+                )}
               </div>
             </div>
-
-            {/* Column 2: Life Expectancy & Survival Rate */}
-            <div className="md:col-span-4 grid grid-cols-2 gap-2">
-              <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-                <div className="text-[10px] text-slate-400">Espérance de vie</div>
-                <div className="text-lg font-extrabold text-white">
-                  {selectedName.adjustedLifeExpectancy} <span className="text-xs font-normal text-slate-400">ans</span>
-                </div>
-                <div className={`text-[10px] font-semibold mt-0.5 ${isPositiveDelta ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  {isPositiveDelta ? `+${delta.toFixed(1)}` : delta.toFixed(1)} ans vs cohorte
-                </div>
-              </div>
-              <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-                <div className="text-[10px] text-slate-400">Survie à ce jour</div>
-                <div className="text-lg font-extrabold text-emerald-400">
-                  {selectedName.adjustedSurvivalRate}%
-                </div>
-                <div className="text-[10px] text-slate-400 mt-0.5">
-                  Décès : {(100 - selectedName.adjustedSurvivalRate).toFixed(1)}%
+          ) : (
+            <div className="pt-3">
+              <div className="bg-slate-900/90 p-4 rounded-xl border border-slate-800 text-center">
+                <p className="text-sm font-semibold text-slate-200 mb-1">
+                  Aucun prénom dans le comparateur
+                </p>
+                <p className="text-xs text-slate-400 mb-3 max-w-md mx-auto">
+                  Ajoutez votre propre prénom ou cliquez sur une suggestion ci-dessous pour lancer l'analyse actuarielle 3D.
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {['Stéphane', 'Alexandre', 'Kevin', 'Sandrine', 'Céline'].map((sug) => (
+                    <button
+                      key={sug}
+                      onClick={() => onAddComparisonName(sug)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-950 hover:bg-sky-900 text-sky-300 text-xs font-medium border border-sky-800/80 transition-colors"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Ajouter {sug}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
-
-            {/* Column 3: Sociological Profile & Famous Figures */}
-            <div className="md:col-span-5 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
-              <div className="flex items-center justify-between text-[11px] font-semibold text-sky-400 mb-0.5">
-                <span>{selectedName.socioTitle}</span>
-                <span className="text-[10px] text-slate-400">HR : {selectedName.mortalityHazardRatio}</span>
-              </div>
-              <p className="text-[11px] text-slate-300 line-clamp-2">
-                {selectedName.socioDescription}
-              </p>
-              {selectedName.famousPeople && selectedName.famousPeople.length > 0 && (
-                <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1 truncate">
-                  <span className="text-amber-400">Illustres :</span>
-                  <span>{selectedName.famousPeople.map((p) => p.name).join(', ')}</span>
-                </div>
-              )}
-            </div>
-          </div>
+          )
         )}
 
         {/* Tab 1: Profile & Birth Year Controls */}
@@ -454,8 +485,9 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                   className={`px-3 py-1.5 rounded-lg transition-all ${
                     viewMode === 'closeUp' ? 'bg-sky-600 text-white' : 'text-slate-400 hover:text-slate-200'
                   }`}
+                  disabled={names.length === 0}
                 >
-                  Focus sur {names[selectedIndex]?.queryName}
+                  Focus sur {names[selectedIndex]?.queryName || 'le prénom'}
                 </button>
               </div>
             </div>
