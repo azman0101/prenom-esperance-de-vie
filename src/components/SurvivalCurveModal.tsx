@@ -6,7 +6,8 @@ interface SurvivalCurveModalProps {
   names: ComputedNameStats[];
   birthYear: number;
   setBirthYear: (year: number) => void;
-  onClose: () => void;
+  onClose?: () => void;
+  isInlineSection?: boolean;
 }
 
 export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
@@ -14,6 +15,7 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
   birthYear,
   setBirthYear,
   onClose,
+  isInlineSection = false,
 }) => {
   const currentAge = Math.max(0, 2026 - birthYear);
   const focusMinAge = Math.max(0, currentAge - 5);
@@ -32,8 +34,6 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
 
   const getSurvivalAtAge = (age: number, lifeExp: number, hazardRatio: number): number => {
     if (age <= 0) return 100;
-    // Standard survival curve model: S(x) = exp( - (x / theta)^beta * HR )
-    // Where theta is modal age at death (~ lifeExp + 3) and beta is Gompertz shape (~7.8)
     const theta = lifeExp + 3;
     const beta = 7.8;
     const standardCumHazard = Math.pow(age / theta, beta);
@@ -79,16 +79,40 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
     }
   };
 
+  const wrapperClass = isInlineSection
+    ? 'max-w-7xl mx-auto w-full px-4 sm:px-6'
+    : 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80';
+
+  const cardClass = isInlineSection
+    ? 'bento-card w-full flex flex-col text-white overflow-hidden'
+    : 'bg-[#0f172a] border border-white/10 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col text-white overflow-hidden';
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80">
-      <div className="bg-[#0f172a] border border-slate-700 rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col text-white overflow-hidden">
-        {/* Header with Year Selector */}
-        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5 border-b border-slate-800">
+    <div className={wrapperClass}>
+      {isInlineSection && (
+        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-white/[0.06] pb-4 mb-6">
           <div>
-            <h2 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
-              <TrendingDown className="w-5 h-5 text-sky-400" />
-              Courbes de Survie par Prénom • Cohorte {birthYear}
+            <p className="text-xs font-medium text-sky-400 mb-1">
+              02. Modélisation Gompertz-Makeham & Tables Insee
+            </p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-white section-heading">
+              Courbes de Survie & Horizon de Longévité ({birthYear})
             </h2>
+          </div>
+          <p className="text-xs sm:text-sm text-slate-400 max-w-md">
+            Visualisation centrée par défaut sur l'horizon actuel ({focusMinAge} à {maxAge} ans) pour mettre en relief les trajectoires de survie jusqu'au grand âge.
+          </p>
+        </div>
+      )}
+
+      <div className={cardClass}>
+        {/* Header with Year Selector */}
+        <div className="flex flex-wrap items-center justify-between gap-3 p-4 sm:p-6 border-b border-white/[0.06]">
+          <div>
+            <h3 className="text-lg sm:text-xl font-bold tracking-tight text-white flex items-center gap-2 section-heading">
+              <TrendingDown className="w-5 h-5 text-sky-400" />
+              Trajectoires de Survie par Prénom • Cohorte {birthYear}
+            </h3>
             <p className="text-xs text-slate-400 mt-0.5">
               Zoom sur l’horizon de vie depuis {minAge} ans (aujourd’hui - 5 ans) jusqu’à {maxAge} ans (Tables Insee & Coulmont)
             </p>
@@ -96,17 +120,19 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
 
           <div className="flex items-center gap-3">
             {/* Inline Year Selector */}
-            <div className="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1.5 rounded-xl border border-slate-700">
+            <div className="flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1.5 rounded-xl border border-white/10">
               <Calendar className="w-3.5 h-3.5 text-sky-400" />
               <span className="text-xs text-slate-400">Année :</span>
               <button
+                type="button"
                 onClick={() => setBirthYear(clampYear(birthYear - 5))}
-                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300"
+                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 tabular-nums"
                 title="-5 ans"
               >
                 -5
               </button>
               <button
+                type="button"
                 onClick={() => setBirthYear(clampYear(birthYear - 1))}
                 className="p-0.5 rounded hover:bg-slate-800 text-slate-300"
               >
@@ -121,48 +147,53 @@ export const SurvivalCurveModal: React.FC<SurvivalCurveModalProps> = ({
                   const val = Number(e.target.value);
                   if (!Number.isNaN(val)) setBirthYear(clampYear(val));
                 }}
-                className="w-16 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-xs font-bold text-center text-sky-400"
+                className="w-16 bg-slate-900 border border-white/10 rounded px-1.5 py-0.5 text-xs font-bold text-center text-sky-400 tabular-nums"
               />
               <button
+                type="button"
                 onClick={() => setBirthYear(clampYear(birthYear + 1))}
                 className="p-0.5 rounded hover:bg-slate-800 text-slate-300"
               >
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
               <button
+                type="button"
                 onClick={() => setBirthYear(clampYear(birthYear + 5))}
-                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300"
+                className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-slate-300 tabular-nums"
                 title="+5 ans"
               >
                 +5
               </button>
             </div>
 
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!isInlineSection && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Content Body */}
-        <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
+        <div className={`p-4 sm:p-6 ${isInlineSection ? '' : 'overflow-y-auto'} space-y-6`}>
           {/* SVG Chart */}
-          <div className="bg-slate-950 p-3 sm:p-4 rounded-xl border border-slate-800">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 mb-2">
+          <div className="bg-slate-950/90 p-3 sm:p-5 rounded-xl border border-white/[0.06]">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 mb-3">
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-slate-200">
                   Taux de survie cumulé (%) de {minAge} à {maxAge} ans
                 </span>
-                <span className="text-[11px] px-2 py-0.5 rounded-md bg-sky-950/80 text-sky-300 border border-sky-800/60">
-                  Référence : {currentAge} ans {isFocusedRange ? `(-5 ans)` : `(depuis 0 an)`}
+                <span className="text-[11px] text-sky-400 font-medium">
+                  · Référence : {currentAge} ans {isFocusedRange ? `(-5 ans)` : `(depuis 0 an)`}
                 </span>
               </div>
 
               <div className="flex items-center gap-2">
-                <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-[11px]">
+                <div className="flex bg-slate-900 p-0.5 rounded-lg border border-white/10 text-[11px]">
                   <button
                     type="button"
                     onClick={() => setIsFocusedRange(true)}

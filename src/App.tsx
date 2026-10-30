@@ -1,9 +1,9 @@
-import React, { useState, useMemo, useEffect, Suspense, lazy } from 'react';
-import { ShinyHeader } from './components/ShinyHeader';
-import { ControlDock } from './components/ControlDock';
+import React, { useState, useMemo, useEffect, useRef, Suspense, lazy } from 'react';
+import { ShinyHeader, ScrollySectionId } from './components/ShinyHeader';
+import { ControlDock, BentoComparatorSection } from './components/ControlDock';
 import { computeNameStats, ComputedNameStats } from './data/demographics';
 
-// Lazy-load heavy 3D WebGL renderer and modal views to improve LCP and reduce initial main-thread compilation
+// Lazy-load heavy 3D WebGL renderer and scrollytelling sections to optimize initial LCP
 const ThreeDemographicScene = lazy(() =>
   import('./components/ThreeDemographicScene').then((m) => ({ default: m.ThreeDemographicScene }))
 );
@@ -16,6 +16,14 @@ const CohortTopNamesModal = lazy(() =>
 const MethodologyModal = lazy(() =>
   import('./components/MethodologyModal').then((m) => ({ default: m.MethodologyModal }))
 );
+
+const SECTION_DOM_IDS: Record<ScrollySectionId, string> = {
+  '3d': 'section-3d',
+  bento: 'section-bento',
+  curves: 'section-curves',
+  topNames: 'section-top-names',
+  methodology: 'section-methodology',
+};
 
 export default function App() {
   // Authoritative Compared Names List
@@ -30,15 +38,14 @@ export default function App() {
   const [gender, setGender] = useState<'M' | 'F' | 'X'>('M');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // 3D Camera & Display State
-  const [activeTab, setActiveTab] = useState<'3d' | 'curves' | 'topNames'>('3d');
+  // Scrollytelling Active Section & 3D Camera State
+  const [activeSection, setActiveSection] = useState<ScrollySectionId>('3d');
+  const [is3dInViewport, setIs3dInViewport] = useState(true);
   const [viewMode, setViewMode] = useState<'overview' | 'comparison' | 'closeUp'>('overview');
   const [cameraTrigger, setCameraTrigger] = useState(0);
   const [isAutoRotate, setIsAutoRotate] = useState(false);
 
-  // Modals
-  const [isMethodologyOpen, setIsMethodologyOpen] = useState(false);
-  const [isTopNamesOpen, setIsTopNamesOpen] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Defer WebGL scene initialization until after first UI paint to minimize LCP render delay
   const [is3DReady, setIs3DReady] = useState(false);
@@ -50,11 +57,78 @@ export default function App() {
   // Compute Actuarial & Demographic Data for all compared names
   const computedStatsList: ComputedNameStats[] = useMemo(() => {
     return namesList.map((name, idx) => {
-      // First name follows the user-selected gender, others use their natural gender
       const g = idx === 0 && gender !== 'X' ? gender : undefined;
       return computeNameStats(name, birthYear, g);
     });
   }, [namesList, birthYear, gender]);
+
+  // IntersectionObserver to sync Floating Glass Dock active state, fade-in Bento sections, and pause WebGL offscreen
+  useEffect(() => {
+    const rootEl = scrollContainerRef.current;
+    if (!rootEl) return;
+
+    const sectionEntries = new Map<string, number>();
+
+    const navObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const id = entry.target.id;
+          sectionEntries.set(id, entry.isIntersecting ? entry.intersectionRatio : 0);
+
+          if (id === 'section-3d') {
+            setIs3dInViewport(entry.isIntersecting && entry.intersectionRatio > 0.08);
+          }
+
+          if (entry.isIntersecting && entry.target.classList.contains('bento-section')) {
+            entry.target.classList.add('visible');
+          }
+        });
+
+        // Pick section with highest visibility ratio
+        let bestId: ScrollySectionId | null = null;
+        let bestRatio = 0;
+        (Object.entries(SECTION_DOM_IDS) as [ScrollySectionId, string][]).forEach(([secKey, domId]) => {
+          const ratio = sectionEntries.get(domId) || 0;
+          if (ratio > bestRatio) {
+            bestRatio = ratio;
+            bestId = secKey;
+          }
+        });
+
+        if (bestId && bestRatio > 0.12) {
+          setActiveSection(bestId);
+        }
+      },
+      {
+        root: rootEl,
+        threshold: [0.05, 0.15, 0.3, 0.5, 0.75],
+      }
+    );
+
+    const observeSections = () => {
+      Object.values(SECTION_DOM_IDS).forEach((domId) => {
+        const el = document.getElementById(domId);
+        if (el) navObserver.observe(el);
+      });
+    };
+
+    observeSections();
+    const retryTimer = window.setTimeout(observeSections, 350);
+
+    return () => {
+      window.clearTimeout(retryTimer);
+      navObserver.disconnect();
+    };
+  }, []);
+
+  const handleNavigateSection = (target: ScrollySectionId) => {
+    setActiveSection(target);
+    const domId = SECTION_DOM_IDS[target];
+    const el = document.getElementById(domId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   // Synchronize user primary name input with namesList[0]
   const handleUserPrimaryNameChange = (newName: string) => {
@@ -107,91 +181,136 @@ export default function App() {
     setUserPrimaryName(presetNames[0]);
     setNamesList(presetNames);
     setSelectedIndex(0);
+    handleNavigateSection('3d');
   };
 
-  const isAnyModalOpen = activeTab === 'curves' || isTopNamesOpen || isMethodologyOpen;
-
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#0a0f1d] text-white">
-      {/* 1. Full-Bleed 3D Scene Viewport (Deferred & Lazy-Loaded) */}
-      {is3DReady && (
-        <Suspense fallback={<div className="absolute inset-0 bg-[#0a0f1d]" />}>
-          <ThreeDemographicScene
-            names={computedStatsList}
-            selectedIndex={selectedIndex}
-            onSelectName={setSelectedIndex}
-            isAutoRotate={isAutoRotate}
-            viewMode={viewMode}
-            cameraTrigger={cameraTrigger}
-            isPaused={isAnyModalOpen}
-          />
-        </Suspense>
-      )}
-
-      {/* 2. Shiny Navigation Header */}
+    <div
+      ref={scrollContainerRef}
+      className="smooth-scroll-container relative w-screen h-screen bg-[#060911] text-white"
+    >
+      {/* Sticky Glassmorphic Navigation Dock */}
       <ShinyHeader
         birthYear={birthYear}
         setBirthYear={setBirthYear}
         totalCompared={computedStatsList.length}
-        activeTab={activeTab}
-        setActiveTab={(tab) => {
-          if (tab === 'topNames') {
-            setIsTopNamesOpen(true);
-          } else {
-            setActiveTab(tab);
-          }
-        }}
-        onOpenMethodology={() => setIsMethodologyOpen(true)}
-        onOpenTopNames={() => setIsTopNamesOpen(true)}
+        activeSection={activeSection}
+        onNavigateSection={handleNavigateSection}
       />
 
-      {/* 3. Unified Collapsible Bottom Control Dock (Zero Viewport Occlusion) */}
-      <ControlDock
-        names={computedStatsList}
-        userPrimaryName={userPrimaryName}
-        setUserPrimaryName={handleUserPrimaryNameChange}
-        birthYear={birthYear}
-        setBirthYear={setBirthYear}
-        gender={gender}
-        setGender={setGender}
-        selectedIndex={selectedIndex}
-        setSelectedIndex={setSelectedIndex}
-        onAddComparisonName={handleAddComparisonName}
-        onRemoveComparisonName={handleRemoveComparisonName}
-        isAutoRotate={isAutoRotate}
-        setIsAutoRotate={setIsAutoRotate}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-        onTriggerCameraReset={() => setCameraTrigger((c) => c + 1)}
-        onOpenTopNames={() => setIsTopNamesOpen(true)}
-      />
+      {/* Section 1: Interactive 3D Viewport + Integrated Stage Control Dock */}
+      <section
+        id="section-3d"
+        aria-label="Visualisation Piliers 3D"
+        className="relative w-full min-h-[86vh] h-[86vh] shrink-0 overflow-hidden border-b border-white/[0.06] -mt-16 pt-16"
+      >
+        {is3DReady && (
+          <Suspense fallback={<div className="absolute inset-0 bg-[#0a0f1d]" />}>
+            <ThreeDemographicScene
+              names={computedStatsList}
+              selectedIndex={selectedIndex}
+              onSelectName={setSelectedIndex}
+              isAutoRotate={isAutoRotate}
+              viewMode={viewMode}
+              cameraTrigger={cameraTrigger}
+              isPaused={!is3dInViewport}
+            />
+          </Suspense>
+        )}
 
-      {/* 4. Lazy-Loaded Modals */}
-      <Suspense fallback={null}>
-        {activeTab === 'curves' && (
+        <ControlDock
+          names={computedStatsList}
+          userPrimaryName={userPrimaryName}
+          setUserPrimaryName={handleUserPrimaryNameChange}
+          birthYear={birthYear}
+          setBirthYear={setBirthYear}
+          gender={gender}
+          setGender={setGender}
+          selectedIndex={selectedIndex}
+          setSelectedIndex={setSelectedIndex}
+          onAddComparisonName={handleAddComparisonName}
+          onRemoveComparisonName={handleRemoveComparisonName}
+          isAutoRotate={isAutoRotate}
+          setIsAutoRotate={setIsAutoRotate}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          onTriggerCameraReset={() => setCameraTrigger((c) => c + 1)}
+          onOpenTopNames={() => handleNavigateSection('topNames')}
+        />
+      </section>
+
+      {/* Section 2: Asymmetrical Bento Grid Comparator & Sociological Studio */}
+      <section
+        id="section-bento"
+        aria-label="Studio Comparatif Bento"
+        className="bento-section visible scroll-mt-24"
+      >
+        <BentoComparatorSection
+          names={computedStatsList}
+          userPrimaryName={userPrimaryName}
+          setUserPrimaryName={handleUserPrimaryNameChange}
+          birthYear={birthYear}
+          setBirthYear={setBirthYear}
+          gender={gender}
+          setGender={setGender}
+          selectedIndex={selectedIndex}
+          setSelectedIndex={setSelectedIndex}
+          onAddComparisonName={handleAddComparisonName}
+          onRemoveComparisonName={handleRemoveComparisonName}
+          isAutoRotate={isAutoRotate}
+          setIsAutoRotate={setIsAutoRotate}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          onTriggerCameraReset={() => setCameraTrigger((c) => c + 1)}
+          onOpenTopNames={() => handleNavigateSection('topNames')}
+        />
+      </section>
+
+      {/* Section 3: Inline Survival Curves & Actuarial Matrix */}
+      <section
+        id="section-curves"
+        aria-label="Courbes de Survie"
+        className="bento-section visible scroll-mt-24"
+      >
+        <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement des courbes de survie...</div>}>
           <SurvivalCurveModal
             names={computedStatsList}
             birthYear={birthYear}
             setBirthYear={setBirthYear}
-            onClose={() => setActiveTab('3d')}
+            isInlineSection={true}
           />
-        )}
+        </Suspense>
+      </section>
 
-        {isTopNamesOpen && (
+      {/* Section 4: Inline Cohort Top Names & Generation Presets */}
+      <section
+        id="section-top-names"
+        aria-label="Palmarès des Prénoms"
+        className="bento-section visible scroll-mt-24"
+      >
+        <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement du palmarès...</div>}>
           <CohortTopNamesModal
             birthYear={birthYear}
             setBirthYear={setBirthYear}
             currentlyCompared={namesList}
             onAddName={handleAddComparisonName}
             onApplyPreset={handleApplyPreset}
-            onClose={() => setIsTopNamesOpen(false)}
+            isInlineSection={true}
           />
-        )}
+        </Suspense>
+      </section>
 
-        {isMethodologyOpen && (
-          <MethodologyModal onClose={() => setIsMethodologyOpen(false)} />
-        )}
-      </Suspense>
+      {/* Section 5: Inline Sociological & Actuarial Methodology */}
+      <section
+        id="section-methodology"
+        aria-label="Méthodologie et Sources"
+        className="bento-section visible scroll-mt-24"
+      >
+        <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement de la méthodologie...</div>}>
+          <MethodologyModal isInlineSection={true} />
+        </Suspense>
+      </section>
     </div>
   );
 }
+
