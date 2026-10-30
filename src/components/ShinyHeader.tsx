@@ -1,11 +1,12 @@
 import React from 'react';
 import { BarChart3, Box, BookOpen, Users, Compass, ChevronLeft, ChevronRight, Calendar, LayoutGrid } from 'lucide-react';
-import { BIRTH_DECADES, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR, ageFromBirthYear, clampBirthYear } from '../data/demographics';
+import { ageFromBirthYear, clampBirthYear } from '../data/demographics';
 
 export type ScrollySectionId = '3d' | 'bento' | 'curves' | 'topNames' | 'methodology';
 
 interface ShinyHeaderProps {
   birthYear: number;
+  years: number[];
   setBirthYear: (year: number) => void;
   totalCompared: number;
   activeSection: ScrollySectionId;
@@ -14,6 +15,7 @@ interface ShinyHeaderProps {
 
 export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
   birthYear,
+  years,
   setBirthYear,
   totalCompared,
   activeSection,
@@ -58,7 +60,7 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             <span className="text-[11px] text-slate-400 font-medium hidden sm:inline">Cohorte :</span>
             <button
               type="button"
-              onClick={() => setBirthYear(clampBirthYear(birthYear - 1))}
+              onClick={() => setBirthYear(clampBirthYear(birthYear - 1, years))}
               className="p-1 rounded-full hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
               title="Année précédente (-1 an)"
             >
@@ -66,19 +68,19 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             </button>
             <input
               type="number"
-              min={MIN_BIRTH_YEAR}
-              max={MAX_BIRTH_YEAR}
+              min={years[0]}
+              max={years[years.length - 1]}
               value={birthYear}
               onChange={(e) => {
                 const val = Number(e.target.value);
-                if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val));
+                if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val, years));
               }}
               aria-label="Année de naissance globale"
               className="w-14 bg-transparent border border-white/10 focus:border-sky-400 rounded-md px-1 py-0.5 text-xs font-bold text-center text-sky-300 tabular-nums focus:outline-none"
             />
             <button
               type="button"
-              onClick={() => setBirthYear(clampBirthYear(birthYear + 1))}
+              onClick={() => setBirthYear(clampBirthYear(birthYear + 1, years))}
               className="p-1 rounded-full hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
               title="Année suivante (+1 an)"
             >
@@ -86,7 +88,7 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             </button>
 
             <span className="text-[11px] text-slate-400 pl-1.5 border-l border-white/10 whitespace-nowrap tabular-nums">
-              <strong className="text-slate-200">{ageFromBirthYear(birthYear)} ans</strong>
+              <strong className="text-slate-200">{ageFromBirthYear(birthYear)} an{ageFromBirthYear(birthYear) > 1 ? 's' : ''}</strong>
             </span>
 
             {/* Quick Decade Dropdown */}
@@ -97,7 +99,7 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
               className="ml-1 bg-slate-900/90 hover:bg-slate-800 text-[11px] text-sky-300 font-medium rounded-full px-2 py-0.5 border border-white/10 cursor-pointer focus:outline-none"
               title="Accès rapide par décennie"
             >
-              {BIRTH_DECADES.map((dec) => (
+              {years.filter(y => y % 10 === 0).map((dec) => (
                 <option key={dec} value={dec}>
                   {dec}s
                 </option>

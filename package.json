@@ -8,7 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "data:sync": "python3 scripts/data/sync.py",
+    "data:validate": "python3 scripts/data/sync.py --validate public/data",
+    "test": "node scripts/test-demographics.mjs",
+    "test:data": "python3 -m unittest discover -s tests -v",
+    "prebuild": "node scripts/check-data.mjs",
+    "test:browser": "node scripts/smoke-browser.mjs"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",

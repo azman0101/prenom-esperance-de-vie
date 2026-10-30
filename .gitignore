@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+.cache/
+.venv/
+__pycache__/
+public/data/
+public/data.staging/
+public/data.previous/

@@ -1,144 +1,81 @@
-# Prénoms & Espérance de Vie — Observatoire Démographique 3D & 2D
+# Prénoms & Longévité
 
-Application web interactive de visualisation démographique et sociologique en **3D (Three.js)** et **2D (Courbes de survie de Gompertz)**. Elle permet d'explorer la popularité des prénoms en France de **1920 à 2024**, de comparer l'espérance de vie et les taux de survie par cohorte de naissance, et de visualiser l'impact des marqueurs socioculturels sur la longévité.
+Observatoire statique React / Three.js : prénoms officiels INSEE, survie estimée à partir des décès enregistrés et **projection de longévité sous hypothèses**. Les statistiques ne sont plus des listes manuelles ou des valeurs calculées à partir d'un hash du prénom.
 
----
+## Sources et construction du dataset
 
-## 1. Bases Scientifiques et Sources du Projet
+Le [script R de Baptiste Coulmont](https://github.com/coulmont/varia/blob/master/2024_deces-prenoms_parquet.R) lit un CSV national `nat2023.csv` acquis localement, supprime les accents, regroupe les graphies, puis rapproche naissances et décès pour les 14 premiers prénoms de chaque sexe de la génération 1970. Il calcule une proportion de survivants, **pas une espérance de vie ni un profil social**. L'[article original](https://coulmont.com/blog/2024/11/11/prenom-vie-mort/) date du 11 novembre 2024.
 
-Ce projet s'inspire des travaux de sociologie quantitative et de démographie menés par **Baptiste Coulmont** (professeur de sociologie à l'Université Paris 8), notamment son billet publié en novembre 2024 :
-> **« Un prénom pour la vie (et aussi pour la mort) »** — [coulmont.com](https://coulmont.com)
-> Script R de référence : [`2024_deces-prenoms_parquet.R`](https://raw.githubusercontent.com/coulmont/varia/refs/heads/master/2024_deces-prenoms_parquet.R)
+Notre acquisition découvre les millésimes depuis les métadonnées :
 
-### Les deux sources Open Data de l'INSEE utilisées dans l'étude originale
-L'analyse de référence croise deux bases de données publiques produites par l'**INSEE** (disponibles sur `insee.fr` et `data.gouv.fr`) :
-1. **Le Fichier des prénoms de l'INSEE** : recensement des naissances par prénom, sexe et année de naissance en France depuis 1900.
-2. **Le Fichier des personnes décédées de l'INSEE** : registre individuel des décès enregistrés en France depuis 1970 (comprenant le prénom, le sexe, l'année de naissance et l'année de décès).
+- [Catalogue INSEE DS_PRENOM](https://api.insee.fr/melodi/catalog/DS_PRENOM) : découverte de la publication, téléchargement de son extrait national CSV. L'édition publiée en juillet 2026 couvre 1900–2025 et fournit un rang officiel et des effectifs arrondis à cinq près.
+- [Agrégation officielle data.gouv.fr des décès](https://www.data.gouv.fr/datasets/agregation-des-fichiers-des-personnes-decedees) : découverte de la ressource Parquet par l'API, actuellement des enregistrements de 1970 à septembre 2026. Les dates de survenue et d'enregistrement peuvent différer.
+- [Catalogue INSEE des séries de mortalité](https://api.insee.fr/melodi/catalog/DS_DECES_MORTALITE_SERIES) : découverte du bilan et de ses tableaux DEC3 (quotients par âge/sexe) et DEC5 (espérance résiduelle).
 
-### Du script R (`arrow` / `duckdb`) au modèle actuariel embarqué
-Dans le script R original de Baptiste Coulmont, les fichiers Parquet de l'INSEE sont interrogés via **Apache Arrow** (`{arrow}`) et **DuckDB** (`{duckdb}`) pour calculer la proportion de personnes nées une année donnée (ex. 1950, 1970) toujours en vie en 2024.
+Le catalogue pointe sur les nouvelles éditions : aucune substitution manuelle d'année dans une URL n'est nécessaire. Les anciennes années sont recalculées pour intégrer les révisions. Si la structure d'une source change, le traitement échoue plutôt que d'inventer des données.
 
-Pour permettre une exécution instantanée dans le navigateur sans serveur ni téléchargement de plusieurs gigaoctets de fichiers Parquet :
-* L'application embarque dans `src/data/demographics.ts` les **tables de survie et d'espérance de vie par cohorte (1920–2024)**, une base de prénoms de référence calibrée avec leurs **ratios de risque (*Hazard Ratios*)**, leur décennie pic (`peakDecade`) et leurs profils sociodémographiques, ainsi qu'un modèle d'estimation déterministe pour tout prénom personnalisé saisi par l'utilisateur.
-* **Le prénom comme marqueur social** : Le prénom n'influence évidemment pas biologiquement la longévité, mais agit comme un **indicateur statistique du milieu social d'origine** (niveau de diplôme des parents, catégorie socioprofessionnelle, exposition aux risques professionnels, accès aux soins).
+## Installation et vérification
 
----
+Node **22.18+**, Bun 1.4.4+ et Python 3.12. Le frontend n'a aucune clé API ni backend.
 
-## 2. Conception « Full IA » & Architecture Technique
+```bash
+bun install --frozen-lockfile
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r scripts/data/requirements.txt
+npm run data:sync
+npm run test:data
+npm test
+npm run lint
+npm run build
+npm run test:browser  # nécessite Chromium/Chrome (CHROME_BIN si nécessaire)
+npm run dev
+```
 
-Cette application a été intégralement conçue, architecturée, codée et optimisée par **Intelligence Artificielle (Full IA)** à partir d'une expression de besoin en langage naturel et du script R de Baptiste Coulmont.
+L'import initial télécharge environ 660 Mo de décès et utilise jusqu'à 2 Go de mémoire DuckDB, avec débordement disque. Prévoir 10 Go d'espace temporaire. Les sources sont dans `.cache/data/`, ignoré par Git ; les ETag et dates HTTP permettent leur réutilisation. Les fichiers individuels ne sont jamais déployés.
 
-### Caractéristiques techniques :
-* **Rendu 3D 100% procédural (Zéro ressource externe `.glb` / `.png`)** : Toute la géométrie 3D (`src/components/ThreeDemographicScene.tsx` : socles en basalte, bagues en laiton, fûts proportionnels à l'espérance de vie, cristaux sommitaux, plaques et étiquettes Canvas 2D) est générée procéduralement en TypeScript avec Three.js.
-* **Optimisation thermique & GPU (MacBook / High-DPI)** :
-  * Chargement différé (`React.lazy` & `Suspense`) du moteur 3D et des modales après le premier affichage UI.
-  * Boucle de rendu plafonnée à **30 FPS** lors des mouvements et **mise en veille automatique à 0 FPS** dès que la scène est immobile, que l'onglet est en arrière-plan ou qu'une modale est ouverte.
-  * `devicePixelRatio` plafonné à `1.25` sur les écrans Retina pour éviter la surchauffe GPU.
-* **Courbes de survie centrées sur l'horizon de vie restant** (`src/components/SurvivalCurveModal.tsx`) : Par défaut, l'axe des âges débute à `Âge actuel - 5 ans` jusqu'à `105 ans` (avec bascule possible vers `0 – 105 ans`) afin de mettre en évidence les écarts de survie d'aujourd'hui jusqu'à la fin de vie.
-* **Indicateurs de tendance annuelle** (`src/components/ControlDock.tsx`) : Calcul déterministe de la variation de popularité de chaque prénom entre l'année sélectionnée (`N`) et l'année précédente (`N-1`).
+```bash
+# Reconstruire depuis les mêmes sources conservées, sans réseau
+python3 scripts/data/sync.py --offline
+# Valider un snapshot existant
+npm run data:validate
+```
 
-### Pile technologique (Stack)
-* **Frontend** : React 19, TypeScript, Tailwind CSS v4 (`@tailwindcss/vite`)
-* **Rendu 3D** : Three.js (`three` v0.186)
-* **Icônes** : `lucide-react`
-* **Outil de build** : Vite 8 (`vite` v8.3, `esbuild` v0.28)
+`public/data/` est généré, ignoré par Git et doit exister avant la publication du site. Il contient le manifeste, le palmarès annuel exact, un index des noms, les cohortes et un rapport de qualité. Le navigateur charge uniquement ces agrégats. Une absence de snapshot affiche un état d'erreur avec possibilité de réessayer, sans données simulées de secours.
 
----
+## Calculs et limites
 
-## 3. Installation et Configuration en Local
+### Observations
 
-### Prérequis
-* **Node.js** : version **20 LTS** ou **22 LTS** recommandée (requis par Vite 8)
-* **npm** (inclus avec Node.js)
+Le rapprochement utilise premier prénom, sexe, année et lieu de naissance en France, avec retrait des oppositions et doublons. Les dates inconnues sont conservées à la résolution annuelle lorsque l'année est complète ; une date inconnue dans l'année partielle la plus récente ne peut pas être placée avant sa date d'arrêt. Les graphies restent distinctes pour le rang officiel ; les variantes accentuées sont regroupées pour le rapprochement, avec leur dénominateur explicite.
 
-### Étapes d'installation
+La survie estimée vaut `1 − décès cumulés / naissances`. Elle est indisponible avant 1970, pour moins de 100 naissances regroupées ou pour un décompte incohérent. Les fichiers de 1970–1975 présentent des lacunes. Une absence de naissance publiée ne vaut jamais zéro. Changements de prénom, migrations, délais d'enregistrement, géographie et arrondis peuvent biaiser cet indicateur ; il ne certifie aucun statut vital individuel.
 
-1. **Cloner le dépôt** :
-   ```bash
-   # Via SSH :
-   git clone git@github.com:azman0101/prenom-esperance-de-vie.git
-   # Ou via HTTPS :
-   # git clone https://github.com/azman0101/prenom-esperance-de-vie.git
+### Projection
 
-   cd prenom-esperance-de-vie
-   ```
+Le modèle binomial agrégé à lien complémentaire log-log emploie les quotients nationaux comme offset, un effet prénom/sexe et une déviation par décennie, régularisés par ridge. L'apprentissage utilise les cohortes à partir de 1976, les années couvertes par les quotients nationaux et uniquement des années complètes de décès.
 
-2. **Installer les dépendances** :
-   ```bash
-   npm install
-   ```
-   > **Note sur la résolution des dépendances (`esbuild` / `vite`)** : Le fichier `package.json` aligne `esbuild` sur `^0.28.0` pour respecter la dépendance optionnelle de `vite@^8.3.0`. Si vous utilisez une version ancienne de npm ou rencontrez un conflit de cache local, exécutez `npm install --legacy-peer-deps`.
+La pénalité est choisie parmi 1, 10 et 100 sur trois validations chronologiques de deux années : 2020–2021, 2022–2023 et 2024–2025 pour les données actuelles. Les fenêtres avancent avec la dernière année complète de calibration. L'ajustement n'est publié que si le gain moyen de log-vraisemblance prédictive atteint 1 %. Chaque groupe exige en outre 1 000 naissances de calibration et 20 décès. Sinon : **référence INSEE seule**. Ces fenêtres servent à sélectionner et valider chaque version, sans prétendre constituer un test indépendant après sélection. Le rapport conserve leurs bornes et leurs scores.
 
-3. **Lancer le serveur de développement** :
-   ```bash
-   npm run dev
-   ```
-   Ouvrez ensuite votre navigateur sur [`http://localhost:3000`](http://localhost:3000) (aucun fichier `.env` ni clé API n'est nécessaire, l'application fonctionne intégralement côté client).
+Les intervalles à 95 % utilisent l'approximation de Laplace de la vraisemblance pénalisée avec sensibilité à l'arrondi du dénominateur. Ils ne couvrent ni tous les biais de source ni la dispersion des durées de vie individuelles.
 
-4. **Vérifier le typage TypeScript et compiler pour la production** :
-   ```bash
-   npm run lint
-   npm run build
-   ```
-   La commande `npm run build` génère le dossier statique `dist/` prêt à être hébergé gratuitement.
+La projection maintient constants les quotients de la dernière année publiée et le facteur de risque estimé au prénom. Les quotients DEC3 (âge atteint dans l'année) sont convertis en âges révolus par interpolation des hazards à demi-année ; l'année de naissance reçoit un traitement distinct. Après le dernier âge détaillé, une queue exponentielle est calibrée sur l'espérance résiduelle officielle. Les espérances de référence doivent être reproduites à 0,2 an près. Les années restantes sont l'intégrale de survie **conditionnelle à l'âge actuel**, pas `e0 − âge`. L'âge moyen projeté est l'âge actuel plus cette espérance résiduelle.
 
----
+Le backtest ne valide pas l'extrapolation aux âges futurs non observables. Le prénom est un marqueur statistique, jamais une cause biologique. Les profils sociaux automatiques et personnages célèbres inventés ont été supprimés. Voir aussi l'[explication de l'INSEE sur l'espérance de vie](https://blog.insee.fr/l-esperance-de-vie-un-calcul-fictif-mais-tres-utile-v2025/).
 
-## 4. Hébergement 100% Gratuit sur Cloudflare (Free Tier)
+## Actualisation et publication
 
-L'application étant compilée en fichiers purement statiques (`dist/`), elle s'héberge **à 0 €/mois** sur le **Free Tier de Cloudflare Pages** :
-* **Bande passante illimitée** sur les actifs statiques (`dist/`).
-* **SSL/HTTPS automatique** et CDN mondial HTTP/3.
-* **500 builds par mois gratuits** en intégration continue GitHub.
+`.github/workflows/refresh-data.yml` vérifie l'application et importe les sources chaque lundi à 06:00 UTC, sur demande et sur les modifications de `main`. Les PR passent les mêmes contrôles sans publication. Le rapport est résumé dans GitHub Actions ; le site et son snapshot sont conservés en artefact pendant 90 jours, avec les URL et empreintes SHA-256 dans le manifeste.
 
-### Méthode A : Déploiement continu via GitHub & Cloudflare Pages
+Le job de production publie le dossier `dist/` sur Cloudflare Pages, projet `prenom-esperance-de-vie`. Configurer dans l'environnement GitHub `production` :
 
-1. Poussez votre dépôt sur GitHub (`git@github.com:azman0101/prenom-esperance-de-vie.git`).
-2. Connectez-vous au [Cloudflare Dashboard](https://dash.cloudflare.com/).
-3. Allez dans **Compute (Workers & Pages)** > **Create** > onglet **Pages** > **Import an existing Git repository**.
-4. Sélectionnez le dépôt `prenom-esperance-de-vie` et configurez le build :
-   * **Project name** : `prenom-esperance-de-vie`
-   * **Framework preset** : `Vite`
-   * **Build command** : `npm run build`
-   * **Build output directory** : `dist`
-   * **Environment variable** : `NODE_VERSION` = `22` (ou `20`)
-5. Cliquez sur **Save and Deploy**. Votre application sera accessible sur `https://prenom-esperance-de-vie.pages.dev`.
+- `CLOUDFLARE_API_TOKEN` : droit Cloudflare Pages sur le compte concerné ;
+- `CLOUDFLARE_ACCOUNT_ID` : identifiant du compte.
 
-### Méthode B : Déploiement direct en ligne de commande (Wrangler CLI)
+Les jobs n'ont pas de droit d'écriture sur le dépôt. Un échec d'import, de test, de schéma ou de build bloque le déploiement : la version en ligne précédente reste servie. Un modèle non validé autorise la publication des observations et de la référence nationale, sans effet prénom. Les anciennes versions Cloudflare et les artefacts permettent le retour à une version précédente.
 
-Vous pouvez déployer directement le dossier `dist/` depuis votre terminal :
-
-1. **Compiler le projet localement** :
-   ```bash
-   npm run build
-   ```
-
-2. **Déployer le dossier `dist` avec Wrangler** :
-   ```bash
-   npx wrangler pages deploy dist --project-name=prenom-esperance-de-vie
-   ```
-   *(Lors du premier lancement, Wrangler ouvrira votre navigateur pour authentifier votre compte Cloudflare, puis publiera le contenu du dossier `dist`).*
-
----
-
-## 5. Guide d'Utilisation Rapide
-
-* **Navigation 3D libre** :
-  * **Clic gauche + glisser** : Rotation orbitale autour des piliers 3D.
-  * **Clic droit + glisser** (ou deux doigts) : Déplacement latéral et vertical libre.
-  * **Molette** : Zoom avant / arrière.
-  * **Clic sur un pilier** : Sélectionne le prénom et affiche son détail dans le dock inférieur.
-* **Changement d'année de naissance (1920–2024)** :
-  * Modifiable depuis l'en-tête supérieur (boutons `-1` / `+1`, saisie directe, ou menu déroulant par décennie), depuis l'onglet **Détails**, l'onglet **Votre Prénom & Âge**, le **Palmarès** ou la fenêtre **Courbes de survie**.
-* **Comparateur & Indicateur de tendance** :
-  * Chaque prénom affiche une icône de tendance (hausse en vert / baisse en rose / stable) comparant sa popularité lors de l'année sélectionnée par rapport à l'année précédente (`N-1`).
-  * Vous pouvez ajouter ou supprimer librement n'importe quel prénom (y compris le prénom initial) dans le comparateur.
-* **Courbes de survie (2D)** :
-  * Centrées par défaut sur l'horizon `Aujourd'hui - 5 ans → 105 ans` pour mieux visualiser les écarts de fin de vie, avec survol interactif âge par âge et bouton de bascule vers la vue complète `Depuis 0 an`.
-
----
+Les fichiers bruts restent en cache de traitement. Un snapshot agrégé conservé avec l'artefact permet de reproduire l'affichage, même si les sources en ligne sont révisées. La reconstruction statistique exacte exige également les fichiers bruts portant les empreintes du manifeste.
 
 ## Licence
 
-Projet distribué sous licence **Apache-2.0**. Inspiré des recherches sociologiques de **Baptiste Coulmont** et des données publiques **INSEE**.
-
+Code Apache-2.0 ; données INSEE/data.gouv.fr réutilisées selon leurs licences et attributions, dont la Licence Ouverte 2.0 pour les décès agrégés.

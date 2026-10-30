@@ -2,11 +2,11 @@ import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { ComputedNameStats } from '../data/demographics';
-import { REFERENCE_YEAR, SCENE_RENDER } from '../config';
+import { NameStats } from '../data/demographics';
+import { SCENE_RENDER } from '../config';
 
 interface ThreeDemographicSceneProps {
-  names: ComputedNameStats[];
+  names: NameStats[];
   selectedIndex: number;
   onSelectName: (index: number) => void;
   isAutoRotate: boolean;
@@ -500,7 +500,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     };
   }, []);
 
-  const rebuildMonoliths = (namesList: ComputedNameStats[], targetScene: THREE.Scene) => {
+  const rebuildMonoliths = (namesList: NameStats[], targetScene: THREE.Scene) => {
     // Dispose old monoliths & their procedural textures
     monolithGroupsRef.current.forEach((grp) => {
       targetScene.remove(grp);
@@ -528,7 +528,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
 
     namesList.forEach((item, index) => {
       const posX = startX + index * spacing;
-      const monolithGroup = createMonolithGroup(item, index, isSoftwareGlRef.current);
+      const monolithGroup = createMonolithGroup(item, index, isSoftwareGlRef.current, Math.max(110, ...namesList.map(n => n.projection.expectedAge)));
       monolithGroup.position.set(posX, 0, 0);
       targetScene.add(monolithGroup);
       monolithGroupsRef.current.push(monolithGroup);
@@ -557,7 +557,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
  */
 function drawCanvasTrendIcon(
   ctx: CanvasRenderingContext2D,
-  trend: 'up' | 'down' | 'stable',
+  trend: 'up' | 'down' | 'stable' | 'unavailable',
   cx: number,
   cy: number,
   size: number,
@@ -620,19 +620,18 @@ function drawCanvasTrendIcon(
  * - Soft radial contact shadow plane directly beneath
  * - Zero 404 external asset dependencies
  */
-function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareGl = false): THREE.Group {
+function createMonolithGroup(item: NameStats, index: number, isSoftwareGl = false, maxAge = 110): THREE.Group {
   const group = new THREE.Group();
   group.userData = { monolithIndex: index, item };
 
   // Scale life expectancy to pillar height
   // Baseline: 60 years = 4 units, 85 years = 9 units
   const minAge = 50;
-  const maxAge = 92;
-  const clampedLife = Math.min(maxAge, Math.max(minAge, item.adjustedLifeExpectancy));
+  const clampedLife = Math.min(maxAge, Math.max(minAge, item.projection.expectedAge));
   const totalHeight = 4.0 + ((clampedLife - minAge) / (maxAge - minAge)) * 6.5;
 
   // Split height into: Lived age (solid base shaft) vs Remaining expectancy (translucent luminescent crown)
-  const livedRatio = Math.min(1.0, item.currentAge / item.adjustedLifeExpectancy);
+  const livedRatio = Math.min(1.0, item.currentAge / item.projection.expectedAge);
   const livedHeight = Math.max(1.5, totalHeight * livedRatio);
   const remainingHeight = Math.max(0.6, totalHeight - livedHeight);
 
@@ -645,8 +644,8 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
       : item.popularityTrend === 'down'
       ? '#fb7185'
       : '#94a3b8';
-  const trendSign = item.popularityDeltaPercent > 0 ? '+' : '';
-  const trendDeltaText = `${trendSign}${item.popularityDeltaPercent}% vs ${item.birthYear - 1}`;
+  const trendSign = (item.popularityDeltaPercent ?? 0) > 0 ? '+' : '';
+  const trendDeltaText = item.popularityDeltaPercent === null ? 'Tendance non disponible' : `${trendSign}${item.popularityDeltaPercent}% vs ${item.birthYear - 1}`;
 
   // 1. Part 1: Soft Radial Contact Shadow Grounding Disc (flush with ground at y=0.01)
   const shadowCanvas = document.createElement('canvas');
@@ -719,7 +718,7 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
 
   pctx.font = 'bold 25px sans-serif';
   pctx.fillStyle = '#fef08a';
-  pctx.fillText(`Esp. ${item.adjustedLifeExpectancy} ans · Pop. ${trendSign}${item.popularityDeltaPercent}%`, 256, 94);
+  pctx.fillText(`${item.projection.expectedAge.toFixed(1)} ans projetés · ${item.gender}`, 256, 94);
 
   const plaqueTex = new THREE.CanvasTexture(plaqueCanvas);
   plaqueTex.colorSpace = THREE.SRGBColorSpace;
@@ -785,7 +784,7 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   const crystalTopY = 0.55 + totalHeight + 0.6;
   const crystalGeo = new THREE.OctahedronGeometry(0.65, 0);
   // Survival color: high survival = cyan/emerald, lower survival = orange/red
-  const survivalHue = Math.max(0, Math.min(130, (item.adjustedSurvivalRate - 50) * 2.6)) / 360;
+  const survivalHue = item.observedSurvival === null ? 0.6 : Math.max(0, Math.min(130, (item.observedSurvival - 50) * 2.6)) / 360;
   const survivalColor = new THREE.Color().setHSL(survivalHue, 0.9, 0.6);
 
   const crystalMat = new THREE.MeshStandardMaterial({
@@ -872,12 +871,12 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   // Life expectancy KPI
   lctx.font = 'bold 38px sans-serif';
   lctx.fillStyle = '#38bdf8';
-  lctx.fillText(`${item.adjustedLifeExpectancy} ans`, 256, 122);
+  lctx.fillText(`${item.projection.expectedAge.toFixed(1)} ans projetés`, 256, 122);
 
   // Survival indicator
   lctx.font = '28px sans-serif';
-  lctx.fillStyle = item.adjustedSurvivalRate >= 90 ? '#4ade80' : item.adjustedSurvivalRate >= 70 ? '#fbbf24' : '#f87171';
-  lctx.fillText(`Survie en ${REFERENCE_YEAR} : ${item.adjustedSurvivalRate}%`, 256, 168);
+  lctx.fillStyle = item.observedSurvival === null ? '#94a3b8' : item.observedSurvival >= 90 ? '#4ade80' : item.observedSurvival >= 70 ? '#fbbf24' : '#f87171';
+  lctx.fillText(item.observedSurvival === null ? 'Survie indisponible' : `Survie ${item.observedThrough.slice(0, 4)} : ${item.observedSurvival.toFixed(1)}%`, 256, 168);
 
   // Popularity trend pill inside 3D billboard
   const pillBg =

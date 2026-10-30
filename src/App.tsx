@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef, Suspense, lazy } from 'react';
 import { ShinyHeader, ScrollySectionId } from './components/ShinyHeader';
 import { ControlDock, BentoComparatorSection } from './components/ControlDock';
-import { computeNameStats, ComputedNameStats } from './data/demographics';
-import { DEFAULT_BIRTH_YEAR, DEFAULT_COMPARED_NAMES, SCENE_MOUNT_DELAY_MS } from './config';
+import { computeNameStats, NameStats, Dataset, Manifest, Cohort, TopNames, readData, clampBirthYear } from './data/demographics';
+import { DEFAULT_BIRTH_YEAR, DEFAULT_COMPARED_NAMES, SCENE_MOUNT_DELAY_MS, NAME_COLORS } from './config';
 
 // Lazy-load heavy 3D WebGL renderer and scrollytelling sections to optimize initial LCP
 const ThreeDemographicScene = lazy(() =>
@@ -27,10 +27,16 @@ const SECTION_DOM_IDS: Record<ScrollySectionId, string> = {
 };
 
 export default function App() {
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [top, setTop] = useState<TopNames>({});
+  const [dataset, setDataset] = useState<Dataset | null>(null);
+  const [dataError, setDataError] = useState('');
+  const [reload, setReload] = useState(0);
   // Authoritative Compared Names List
   const [namesList, setNamesList] = useState<string[]>([...DEFAULT_COMPARED_NAMES]);
   const [userPrimaryName, setUserPrimaryName] = useState(DEFAULT_COMPARED_NAMES[0]);
-  const [birthYear, setBirthYear] = useState(DEFAULT_BIRTH_YEAR);
+  const [birthYear, setBirthYearState] = useState(DEFAULT_BIRTH_YEAR);
+  const setBirthYear = (year: number) => setBirthYearState(manifest ? clampBirthYear(year, manifest.birthYears) : year);
   const [gender, setGender] = useState<'M' | 'F' | 'X'>('M');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -50,13 +56,34 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, []);
 
-  // Compute Actuarial & Demographic Data for all compared names
-  const computedStatsList: ComputedNameStats[] = useMemo(() => {
-    return namesList.map((name, idx) => {
-      const g = idx === 0 && gender !== 'X' ? gender : undefined;
-      return computeNameStats(name, birthYear, g);
-    });
-  }, [namesList, birthYear, gender]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setDataError('');
+    Promise.all([readData<Manifest>('manifest.json', controller.signal), readData<{ version: string; years: TopNames }>('top.json', controller.signal)])
+      .then(([meta, rankings]) => {
+        if (meta.schemaVersion !== 1 || !meta.birthYears?.length) throw new Error('Format des données non reconnu.');
+        if (rankings.version !== meta.version) throw new Error('Le snapshot vient de changer. Réessayez pour charger la version actuelle.');
+        setManifest(meta); setTop(rankings.years);
+        setBirthYearState(y => clampBirthYear(y, meta.birthYears));
+      }).catch(error => { if (error.name !== 'AbortError') setDataError(error.message); });
+    return () => controller.abort();
+  }, [reload]);
+  useEffect(() => {
+    if (!manifest) return;
+    const controller = new AbortController();
+    setDataset(null); setDataError('');
+    readData<Cohort>('cohorts/' + birthYear + '.json', controller.signal)
+      .then(cohort => {
+        if (cohort.version !== manifest.version) throw new Error('Les données viennent d’être actualisées. Réessayez.');
+        if (cohort.year !== birthYear) throw new Error('Cohorte incohérente.');
+        setDataset({ manifest, cohort });
+      }).catch(error => { if (error.name !== 'AbortError') setDataError(error.message); });
+    return () => controller.abort();
+  }, [manifest, birthYear, reload]);
+  const computedStatsList: NameStats[] = useMemo(() => {
+    if (!dataset || dataset.cohort.year !== birthYear) return [];
+    return namesList.map((name, idx) => ({ ...computeNameStats(name, birthYear, dataset, idx === 0 && gender !== 'X' ? gender : undefined), colorHex: NAME_COLORS[idx % NAME_COLORS.length] }));
+  }, [namesList, birthYear, gender, dataset]);
 
   // IntersectionObserver to sync Floating Glass Dock active state, fade-in Bento sections, and pause WebGL offscreen
   useEffect(() => {
@@ -115,7 +142,7 @@ export default function App() {
       window.clearTimeout(retryTimer);
       navObserver.disconnect();
     };
-  }, []);
+  }, [manifest, dataset]);
 
   const handleNavigateSection = (target: ScrollySectionId) => {
     setActiveSection(target);
@@ -180,6 +207,7 @@ export default function App() {
     handleNavigateSection('3d');
   };
 
+  if (!manifest) return <main className="min-h-screen flex flex-col items-center justify-center gap-4 text-slate-300"><h1 className="text-2xl">Prénoms & Longévité</h1><p role="status">{dataError || 'Chargement des données officielles…'}</p>{dataError && <button type="button" onClick={() => setReload(r => r + 1)} className="bg-sky-700 rounded-lg p-3">Réessayer</button>}</main>;
   return (
     <div
       ref={scrollContainerRef}
@@ -187,6 +215,7 @@ export default function App() {
     >
       {/* Sticky Glassmorphic Navigation Dock */}
       <ShinyHeader
+        years={manifest.birthYears}
         birthYear={birthYear}
         setBirthYear={setBirthYear}
         totalCompared={computedStatsList.length}
@@ -194,6 +223,9 @@ export default function App() {
         onNavigateSection={handleNavigateSection}
       />
 
+      <div className="max-w-7xl mx-auto px-6 text-xs text-slate-400" role="status">Naissances INSEE jusqu’en {manifest.birthYears.at(-1)} · décès enregistrés au {manifest.deathsThrough} · projections aux conditions {manifest.mortality.year}.
+        {(!dataset || dataset.cohort.year !== birthYear) && <p className="mt-2 text-amber-200">{dataError || 'Chargement de la cohorte…'}{dataError && <button type="button" className="underline ml-3" onClick={() => setReload(r => r + 1)}>Réessayer</button>}</p>}
+      </div>
       {/* Section 1: Interactive 3D Viewport + Integrated Stage Control Dock */}
       <section
         id="section-3d"
@@ -216,6 +248,8 @@ export default function App() {
 
         <ControlDock
           names={computedStatsList}
+          manifest={manifest}
+          suggestions={dataset?.cohort.names.map(r => r[0]) ?? []}
           userPrimaryName={userPrimaryName}
           setUserPrimaryName={handleUserPrimaryNameChange}
           birthYear={birthYear}
@@ -239,10 +273,12 @@ export default function App() {
       <section
         id="section-bento"
         aria-label="Studio Comparatif Bento"
-        className="bento-section visible scroll-mt-24"
+        className="bento-section visible scroll-mt-44 lg:scroll-mt-32"
       >
         <BentoComparatorSection
           names={computedStatsList}
+          manifest={manifest}
+          suggestions={dataset?.cohort.names.map(r => r[0]) ?? []}
           userPrimaryName={userPrimaryName}
           setUserPrimaryName={handleUserPrimaryNameChange}
           birthYear={birthYear}
@@ -266,11 +302,12 @@ export default function App() {
       <section
         id="section-curves"
         aria-label="Courbes de Survie"
-        className="bento-section visible scroll-mt-24"
+        className="bento-section visible scroll-mt-44 lg:scroll-mt-32"
       >
         <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement des courbes de survie...</div>}>
           <SurvivalCurveModal
             names={computedStatsList}
+            manifest={manifest}
             birthYear={birthYear}
             setBirthYear={setBirthYear}
             isInlineSection={true}
@@ -282,10 +319,12 @@ export default function App() {
       <section
         id="section-top-names"
         aria-label="Palmarès des Prénoms"
-        className="bento-section visible scroll-mt-24"
+        className="bento-section visible scroll-mt-44 lg:scroll-mt-32"
       >
         <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement du palmarès...</div>}>
           <CohortTopNamesModal
+            manifest={manifest}
+            top={top}
             birthYear={birthYear}
             setBirthYear={setBirthYear}
             currentlyCompared={namesList}
@@ -300,10 +339,10 @@ export default function App() {
       <section
         id="section-methodology"
         aria-label="Méthodologie et Sources"
-        className="bento-section visible scroll-mt-24"
+        className="bento-section visible scroll-mt-44 lg:scroll-mt-32"
       >
         <Suspense fallback={<div className="max-w-7xl mx-auto px-6 py-12 text-slate-400 text-sm">Chargement de la méthodologie...</div>}>
-          <MethodologyModal isInlineSection={true} />
+          <MethodologyModal manifest={manifest} isInlineSection={true} />
         </Suspense>
       </section>
     </div>
