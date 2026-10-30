@@ -3,6 +3,11 @@ on:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:
+    inputs:
+      force:
+        description: Reconstruire le snapshot même si les sources amont sont inchangées
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -40,14 +45,37 @@ jobs:
       - run: pip install -r scripts/data/requirements.txt
       - run: bun install --frozen-lockfile
       - run: npm run test:data && npm test && npm run lint
-      - uses: actions/cache@v4
-        if: github.event_name != 'pull_request'
+      # Le snapshot est une fonction pure des sources amont et du code de scripts/data :
+      # tant que ni l'un ni l'autre ne change, on le restaure au lieu de le recalculer.
+      # Un cache créé sur la branche par défaut est lisible par toutes les PR ; celui d'une
+      # PR n'est lisible que par elle. Les runs de `main` et du lundi le gardent donc au chaud.
+      - name: Empreinte des sources amont (sans téléchargement)
+        id: stamp
+        run: echo "value=$(python3 scripts/data/sync.py --stamp --cache .cache/stamp)" >> "$GITHUB_OUTPUT"
+      - name: Restaurer le snapshot s'il est à jour
+        id: snapshot
+        uses: actions/cache@v4
+        with:
+          path: public/data
+          key: snapshot-${{ hashFiles('scripts/data/*.py', 'scripts/data/requirements.txt') }}-${{ steps.stamp.outputs.value }}${{ inputs.force && format('-{0}', github.run_id) || '' }}
+      - name: Restaurer les sources brutes
+        id: sources
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        uses: actions/cache/restore@v4
         with:
           path: .cache/data
-          key: official-sources-${{ github.run_id }}
-          restore-keys: official-sources-
-      - name: Acquérir, calibrer et valider le snapshot
-        run: npm run data:sync && npm run data:validate
+          key: sources-${{ steps.stamp.outputs.value }}
+          restore-keys: sources-
+      - name: Acquérir et calculer le snapshot
+        if: steps.snapshot.outputs.cache-hit != 'true'
+        run: npm run data:sync
+      - name: Conserver les sources brutes (hors PR, pour ne pas évincer les caches de main)
+        if: steps.snapshot.outputs.cache-hit != 'true' && steps.sources.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/data
+          key: sources-${{ steps.stamp.outputs.value }}
+      - run: npm run data:validate
       - run: npm run build
       - name: Vérifier le site dans Chrome
         run: npm run test:browser
@@ -63,10 +91,12 @@ jobs:
           python3 - <<'PY'
           import json, os
           m = json.load(open('public/data/manifest.json'))
+          origin = 'restauré du cache' if os.environ['SNAPSHOT_CACHE'] == 'true' else 'reconstruit'
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
-              f.write(f"Snapshot {m['version']} — naissances jusqu’à {max(m['birthYears'])}, décès au {m['deathsThrough']}.\n\n")
-              f.write(f"Modèle par prénom validé : {m['model']['validated']}.\n")
+              f.write(f"Snapshot {m['version']} ({origin}) — naissances jusqu’à {max(m['birthYears'])}, décès au {m['deathsThrough']}.\n")
           PY
+        env:
+          SNAPSHOT_CACHE: ${{ steps.snapshot.outputs.cache-hit }}
   deploy:
     needs: verify
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
