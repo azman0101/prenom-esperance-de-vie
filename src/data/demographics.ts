@@ -738,6 +738,9 @@ export interface ComputedNameStats {
   socioDescription: string;
   rankInBirthYear: number;
   birthsEstimated: number;
+  previousYearBirthsEstimated: number;
+  popularityTrend: 'up' | 'down' | 'stable';
+  popularityDeltaPercent: number;
   famousPeople: { name: string; birthYear: number; role: string; country: string }[];
   colorHex: string;
   accentHex: string;
@@ -755,6 +758,24 @@ export function cleanName(raw: string): string {
 export function capitalize(str: string): string {
   if (!str) return '';
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
+}
+
+function estimateBirthsForYear(peakYear: number, year: number, maxBirths = 15000): number {
+  return Math.max(120, Math.round(maxBirths / (1 + Math.pow(Math.abs(year - peakYear) / 8, 2))));
+}
+
+function computePopularityTrend(
+  currentBirths: number,
+  previousBirths: number
+): { popularityTrend: 'up' | 'down' | 'stable'; popularityDeltaPercent: number } {
+  if (previousBirths <= 0) {
+    return { popularityTrend: 'stable', popularityDeltaPercent: 0 };
+  }
+  const rawDeltaPercent = ((currentBirths - previousBirths) / previousBirths) * 100;
+  const popularityDeltaPercent = Math.round(rawDeltaPercent * 10) / 10;
+  const popularityTrend: 'up' | 'down' | 'stable' =
+    currentBirths > previousBirths ? 'up' : currentBirths < previousBirths ? 'down' : 'stable';
+  return { popularityTrend, popularityDeltaPercent };
 }
 
 export function computeNameStats(
@@ -801,10 +822,15 @@ export function computeNameStats(
     const adjustedSurvivalDecimal = Math.min(0.999, Math.max(0.001, Math.pow(sBaselineDecimal, existing.mortalityHazardRatio)));
     const adjustedSurvivalRate = Math.round(adjustedSurvivalDecimal * 1000) / 10;
 
-    // Estimate rank in birth year
-    const isPeakYear = Math.abs(birthYear - existing.peakDecade) <= 5;
-    const rank = isPeakYear ? Math.floor(Math.random() * 5) + 1 : Math.min(95, Math.floor(Math.abs(birthYear - existing.peakDecade) * 2.5) + 6);
-    const birthsEstimated = Math.max(120, Math.round(15000 / (1 + Math.pow(Math.abs(birthYear - existing.peakDecade) / 8, 2))));
+    // Estimate deterministic rank in birth year
+    const yearDist = Math.abs(birthYear - existing.peakDecade);
+    const rank = yearDist <= 5 ? Math.max(1, Math.round(yearDist) + 1) : Math.min(95, Math.floor(yearDist * 2.5) + 6);
+    const birthsEstimated = estimateBirthsForYear(existing.peakDecade, birthYear, 15000);
+    const previousYearBirthsEstimated = estimateBirthsForYear(existing.peakDecade, birthYear - 1, 15000);
+    const { popularityTrend, popularityDeltaPercent } = computePopularityTrend(
+      birthsEstimated,
+      previousYearBirthsEstimated
+    );
 
     const socioLabels: Record<string, string> = {
       diplomes: 'Classes Diplômées & Cadres Supérieurs',
@@ -831,6 +857,9 @@ export function computeNameStats(
       socioDescription: existing.socioDescription,
       rankInBirthYear: rank,
       birthsEstimated,
+      previousYearBirthsEstimated,
+      popularityTrend,
+      popularityDeltaPercent,
       famousPeople: existing.famousPeople,
       colorHex: existing.colorHex,
       accentHex: existing.accentHex,
@@ -865,6 +894,17 @@ export function computeNameStats(
   const adjustedSurvivalDecimal = Math.min(0.999, Math.max(0.001, Math.pow(sBaselineDecimal, hazardRatio)));
   const adjustedSurvivalRate = Math.round(adjustedSurvivalDecimal * 1000) / 10;
 
+  const customPeakYear = 1945 + (Math.abs(hash) % 65);
+  const customMaxBirths = Math.round(3200 + factor * 6800);
+  const birthsEstimated = estimateBirthsForYear(customPeakYear, birthYear, customMaxBirths);
+  const previousYearBirthsEstimated = estimateBirthsForYear(customPeakYear, birthYear - 1, customMaxBirths);
+  const { popularityTrend, popularityDeltaPercent } = computePopularityTrend(
+    birthsEstimated,
+    previousYearBirthsEstimated
+  );
+  const yearDist = Math.abs(birthYear - customPeakYear);
+  const customRank = Math.min(98, Math.max(8, Math.floor(yearDist * 2.2) + 10));
+
   const colorPalettes = ['#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#f59e0b', '#06b6d4'];
   const chosenColor = colorPalettes[Math.abs(hash) % colorPalettes.length];
 
@@ -883,8 +923,11 @@ export function computeNameStats(
     socioProfile: profile,
     socioTitle: 'Modélisation Insee & Coulmont',
     socioDescription: desc,
-    rankInBirthYear: Math.floor(factor * 80) + 10,
-    birthsEstimated: Math.round(1800 + factor * 4200),
+    rankInBirthYear: customRank,
+    birthsEstimated,
+    previousYearBirthsEstimated,
+    popularityTrend,
+    popularityDeltaPercent,
     famousPeople: [
       { name: `${capitalize(rawName)} Contemporain`, birthYear: birthYear - 5, role: 'Figure notable', country: 'France' },
     ],

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronUp, Plus, X, RotateCw, Sparkles, User, ChevronLeft, ChevronRight } from 'lucide-react';
-import { ComputedNameStats, getTopNamesForYear } from '../data/demographics';
+import { ChevronDown, ChevronUp, Plus, X, RotateCw, Sparkles, User, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { ComputedNameStats, computeNameStats, getTopNamesForYear } from '../data/demographics';
 
 interface ControlDockProps {
   names: ComputedNameStats[];
@@ -48,6 +48,51 @@ export const ControlDock: React.FC<ControlDockProps> = ({
   const selectedName = names[selectedIndex] || names[0];
   const delta = selectedName ? selectedName.adjustedLifeExpectancy - selectedName.cohortLifeExpBaseline : 0;
   const isPositiveDelta = delta >= 0;
+
+  const renderTrendIcon = (item: ComputedNameStats, sizeClass = 'w-3.5 h-3.5') => {
+    const sign = item.popularityDeltaPercent > 0 ? '+' : '';
+    const tooltip = `Popularité en ${item.birthYear} vs ${item.birthYear - 1} : ${
+      item.popularityTrend === 'up'
+        ? 'En hausse'
+        : item.popularityTrend === 'down'
+          ? 'En baisse'
+          : 'Stable'
+    } (${sign}${item.popularityDeltaPercent}% • ~${item.birthsEstimated.toLocaleString(
+      'fr-FR'
+    )} vs ~${item.previousYearBirthsEstimated.toLocaleString('fr-FR')} naissances)`;
+
+    if (item.popularityTrend === 'up') {
+      return (
+        <span
+          title={tooltip}
+          aria-label={`Tendance en hausse (${sign}${item.popularityDeltaPercent}%)`}
+          className="inline-flex items-center text-emerald-400 shrink-0"
+        >
+          <TrendingUp className={sizeClass} />
+        </span>
+      );
+    }
+    if (item.popularityTrend === 'down') {
+      return (
+        <span
+          title={tooltip}
+          aria-label={`Tendance en baisse (${item.popularityDeltaPercent}%)`}
+          className="inline-flex items-center text-rose-400 shrink-0"
+        >
+          <TrendingDown className={sizeClass} />
+        </span>
+      );
+    }
+    return (
+      <span
+        title={tooltip}
+        aria-label="Tendance stable"
+        className="inline-flex items-center text-slate-400 shrink-0"
+      >
+        <Minus className={sizeClass} />
+      </span>
+    );
+  };
 
   // Suggestions for current birth year
   const topNamesForYear = getTopNamesForYear(birthYear);
@@ -170,6 +215,7 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                       style={{ backgroundColor: item.colorHex }}
                     />
                     <span>{item.queryName}</span>
+                    {renderTrendIcon(item, 'w-3.5 h-3.5')}
                     <span className="text-[10px] text-sky-400 font-bold">
                       {item.adjustedLifeExpectancy}a
                     </span>
@@ -199,12 +245,13 @@ export const ControlDock: React.FC<ControlDockProps> = ({
               {/* Column 1: Identity, Interactive Year & Rank */}
               <div className="md:col-span-3 bg-slate-900/90 p-2.5 rounded-xl border border-slate-800">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 truncate">
+                  <div className="flex items-center gap-1.5 truncate">
                     <span
                       className="w-3 h-3 rounded-full shrink-0"
                       style={{ backgroundColor: selectedName.colorHex }}
                     />
                     <h3 className="font-bold text-base text-white truncate">{selectedName.queryName}</h3>
+                    {renderTrendIcon(selectedName, 'w-4 h-4')}
                   </div>
                   <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
                     {selectedName.gender === 'F' ? 'Féminin' : selectedName.gender === 'M' ? 'Masculin' : 'Mixte'}
@@ -244,8 +291,25 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                   <span className="text-[10px] text-slate-400">({selectedName.currentAge}a)</span>
                 </div>
 
-                <div className="text-[11px] text-amber-300 mt-1 font-medium truncate">
-                  Rang en {selectedName.birthYear} : #{selectedName.rankInBirthYear} (~{selectedName.birthsEstimated.toLocaleString('fr-FR')} nais.)
+                <div className="flex items-center justify-between gap-1 text-[11px] text-amber-300 mt-1 font-medium truncate">
+                  <span className="truncate">
+                    Rang {selectedName.birthYear} : #{selectedName.rankInBirthYear} (~{selectedName.birthsEstimated.toLocaleString('fr-FR')} nais.)
+                  </span>
+                  <span
+                    className={`text-[10px] font-semibold shrink-0 ${
+                      selectedName.popularityTrend === 'up'
+                        ? 'text-emerald-400'
+                        : selectedName.popularityTrend === 'down'
+                          ? 'text-rose-400'
+                          : 'text-slate-400'
+                    }`}
+                    title={`Évolution par rapport à ${selectedName.birthYear - 1} (~${selectedName.previousYearBirthsEstimated.toLocaleString('fr-FR')} naissances)`}
+                  >
+                    {selectedName.popularityDeltaPercent > 0
+                      ? `+${selectedName.popularityDeltaPercent}%`
+                      : `${selectedName.popularityDeltaPercent}%`}{' '}
+                    / {selectedName.birthYear - 1}
+                  </span>
                 </div>
               </div>
 
@@ -434,16 +498,20 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                 </button>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {suggestedNames.slice(0, 6).map((name) => (
-                  <button
-                    key={name}
-                    onClick={() => onAddComparisonName(name)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700/60 transition-colors"
-                  >
-                    <Plus className="w-3 h-3 text-sky-400" />
-                    <span>{name}</span>
-                  </button>
-                ))}
+                {suggestedNames.slice(0, 6).map((name) => {
+                  const sugStats = computeNameStats(name, birthYear);
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => onAddComparisonName(name)}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-200 text-xs border border-slate-700/60 transition-colors"
+                    >
+                      <Plus className="w-3 h-3 text-sky-400" />
+                      <span>{name}</span>
+                      {renderTrendIcon(sugStats, 'w-3 h-3')}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
