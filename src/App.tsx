@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, Suspense, lazy } from 'rea
 import { ShinyHeader, ScrollySectionId } from './components/ShinyHeader';
 import { ControlDock, BentoComparatorSection } from './components/ControlDock';
 import { computeNameStats, ComputedNameStats } from './data/demographics';
+import { DEFAULT_BIRTH_YEAR, DEFAULT_COMPARED_NAMES, SCENE_MOUNT_DELAY_MS } from './config';
 
 // Lazy-load heavy 3D WebGL renderer and scrollytelling sections to optimize initial LCP
 const ThreeDemographicScene = lazy(() =>
@@ -27,14 +28,9 @@ const SECTION_DOM_IDS: Record<ScrollySectionId, string> = {
 
 export default function App() {
   // Authoritative Compared Names List
-  const [namesList, setNamesList] = useState<string[]>([
-    'Stéphane',
-    'Alexandre',
-    'Kevin',
-    'Sandrine',
-  ]);
-  const [userPrimaryName, setUserPrimaryName] = useState('Stéphane');
-  const [birthYear, setBirthYear] = useState(1970);
+  const [namesList, setNamesList] = useState<string[]>([...DEFAULT_COMPARED_NAMES]);
+  const [userPrimaryName, setUserPrimaryName] = useState(DEFAULT_COMPARED_NAMES[0]);
+  const [birthYear, setBirthYear] = useState(DEFAULT_BIRTH_YEAR);
   const [gender, setGender] = useState<'M' | 'F' | 'X'>('M');
   const [selectedIndex, setSelectedIndex] = useState(0);
 
@@ -50,7 +46,7 @@ export default function App() {
   // Defer WebGL scene initialization until after first UI paint to minimize LCP render delay
   const [is3DReady, setIs3DReady] = useState(false);
   useEffect(() => {
-    const timer = window.setTimeout(() => setIs3DReady(true), 40);
+    const timer = window.setTimeout(() => setIs3DReady(true), SCENE_MOUNT_DELAY_MS);
     return () => window.clearTimeout(timer);
   }, []);
 

@@ -1,6 +1,15 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronUp, Plus, X, RotateCw, Sparkles, User, ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { ComputedNameStats, computeNameStats, getTopNamesForYear } from '../data/demographics';
+import {
+  ComputedNameStats,
+  MAX_BIRTH_YEAR,
+  MIN_BIRTH_YEAR,
+  ageFromBirthYear,
+  clampBirthYear,
+  computeNameStats,
+  getTopNamesForYear,
+} from '../data/demographics';
+import { REFERENCE_YEAR } from '../config';
 
 interface ControlDockProps {
   names: ComputedNameStats[];
@@ -269,7 +278,7 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => setBirthYear(Math.max(1920, birthYear - 1))}
+                      onClick={() => setBirthYear(clampBirthYear(birthYear - 1))}
                       className="p-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white"
                       title="Année précédente"
                     >
@@ -277,18 +286,18 @@ export const ControlDock: React.FC<ControlDockProps> = ({
                     </button>
                     <input
                       type="number"
-                      min={1920}
-                      max={2024}
+                      min={MIN_BIRTH_YEAR}
+                      max={MAX_BIRTH_YEAR}
                       value={birthYear}
                       onChange={(e) => {
                         const val = Number(e.target.value);
-                        if (!Number.isNaN(val)) setBirthYear(Math.min(2024, Math.max(1920, val)));
+                        if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val));
                       }}
                       className="w-14 bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-[11px] font-bold text-center text-sky-400 tabular-nums"
                     />
                     <button
                       type="button"
-                      onClick={() => setBirthYear(Math.min(2024, birthYear + 1))}
+                      onClick={() => setBirthYear(clampBirthYear(birthYear + 1))}
                       className="p-0.5 rounded hover:bg-slate-800 text-slate-300 hover:text-white"
                       title="Année suivante"
                     >
@@ -408,21 +417,21 @@ export const ControlDock: React.FC<ControlDockProps> = ({
             <div className="md:col-span-5">
               <div className="flex items-center justify-between text-[11px] font-medium text-slate-400 mb-1 tabular-nums">
                 <span>Année de naissance : <strong className="text-sky-400 font-bold">{birthYear}</strong></span>
-                <span>Âge actuel : <strong className="text-white">{2026 - birthYear} ans</strong></span>
+                <span>Âge actuel : <strong className="text-white">{ageFromBirthYear(birthYear)} ans</strong></span>
               </div>
               <div className="flex items-center gap-2">
                 <input
                   type="range"
-                  min={1925}
-                  max={2024}
+                  min={MIN_BIRTH_YEAR}
+                  max={MAX_BIRTH_YEAR}
                   value={birthYear}
                   onChange={(e) => setBirthYear(Number(e.target.value))}
                   className="w-full accent-sky-500 cursor-pointer h-2 bg-slate-800 rounded-lg"
                 />
                 <input
                   type="number"
-                  min={1920}
-                  max={2024}
+                  min={MIN_BIRTH_YEAR}
+                  max={MAX_BIRTH_YEAR}
                   value={birthYear}
                   onChange={(e) => setBirthYear(Number(e.target.value))}
                   className="w-16 bg-slate-900 border border-white/10 rounded-lg px-2 py-1 text-xs text-center text-white tabular-nums"
@@ -648,7 +657,7 @@ export const BentoComparatorSection: React.FC<ControlDockProps> = ({
                 Paramètres de Cohorte & Ajout de Prénoms
               </h3>
               <span className="text-xs text-slate-400 tabular-nums">
-                Âge en 2026 : <strong className="text-white">{2026 - birthYear} ans</strong>
+                Âge en {REFERENCE_YEAR} : <strong className="text-white">{ageFromBirthYear(birthYear)} ans</strong>
               </span>
             </div>
 
@@ -678,8 +687,8 @@ export const BentoComparatorSection: React.FC<ControlDockProps> = ({
                 <div className="flex items-center gap-2 bg-slate-950/90 border border-white/10 rounded-xl px-3 py-1.5">
                   <input
                     type="range"
-                    min={1920}
-                    max={2024}
+                    min={MIN_BIRTH_YEAR}
+                    max={MAX_BIRTH_YEAR}
                     value={birthYear}
                     onChange={(e) => setBirthYear(Number(e.target.value))}
                     className="w-full accent-sky-500 cursor-pointer h-1.5 bg-slate-800 rounded-lg"
@@ -831,7 +840,7 @@ export const BentoComparatorSection: React.FC<ControlDockProps> = ({
                   </div>
 
                   <div className="bg-slate-950/70 p-3.5 rounded-xl border border-white/[0.06]">
-                    <div className="text-xs text-slate-400">Taux de survie en 2026</div>
+                    <div className="text-xs text-slate-400">Taux de survie en {REFERENCE_YEAR}</div>
                     <div className="text-2xl font-extrabold text-emerald-400 mt-0.5 tabular-nums">
                       {selectedName.adjustedSurvivalRate}%
                     </div>
@@ -922,7 +931,7 @@ export const BentoComparatorSection: React.FC<ControlDockProps> = ({
                   {/* Survival Progress Bar */}
                   <div className="mt-3">
                     <div className="flex justify-between text-[11px] text-slate-400 mb-1 tabular-nums">
-                      <span>Survie en 2026</span>
+                      <span>Survie en {REFERENCE_YEAR}</span>
                       <strong className="text-slate-200">{item.adjustedSurvivalRate}%</strong>
                     </div>
                     <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">

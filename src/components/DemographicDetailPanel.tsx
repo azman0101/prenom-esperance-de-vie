@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Award, TrendingUp, HeartPulse, UserCheck, ShieldAlert, Sparkles, ChevronRight, X } from 'lucide-react';
 import { ComputedNameStats } from '../data/demographics';
+import { REFERENCE_YEAR } from '../config';
 
 interface DemographicDetailPanelProps {
   selectedName: ComputedNameStats;
@@ -52,7 +53,7 @@ export const DemographicDetailPanel: React.FC<DemographicDetailPanelProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Cohorte {selectedName.birthYear} • Âge en 2026 : <strong className="text-white">{selectedName.currentAge} ans</strong>
+                Cohorte {selectedName.birthYear} • Âge en {REFERENCE_YEAR} : <strong className="text-white">{selectedName.currentAge} ans</strong>
               </p>
             </div>
             <button
@@ -92,7 +93,7 @@ export const DemographicDetailPanel: React.FC<DemographicDetailPanelProps> = ({
             <div className="bg-slate-900/90 p-2.5 rounded-xl border border-slate-800/80">
               <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mb-1">
                 <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Taux de survie en 2026</span>
+                <span>Taux de survie en {REFERENCE_YEAR}</span>
               </div>
               <div className="text-xl font-extrabold text-emerald-400">
                 {selectedName.adjustedSurvivalRate}%

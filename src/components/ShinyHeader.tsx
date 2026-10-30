@@ -1,5 +1,6 @@
 import React from 'react';
 import { BarChart3, Box, BookOpen, Users, Compass, ChevronLeft, ChevronRight, Calendar, LayoutGrid } from 'lucide-react';
+import { BIRTH_DECADES, MAX_BIRTH_YEAR, MIN_BIRTH_YEAR, ageFromBirthYear, clampBirthYear } from '../data/demographics';
 
 export type ScrollySectionId = '3d' | 'bento' | 'curves' | 'topNames' | 'methodology';
 
@@ -18,8 +19,6 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
   activeSection,
   onNavigateSection,
 }) => {
-  const clampYear = (y: number) => Math.min(2024, Math.max(1920, y));
-
   const navItems: { id: ScrollySectionId; label: string; shortLabel: string; icon: React.ReactNode; badge?: number }[] = [
     { id: '3d', label: 'Piliers 3D', shortLabel: '3D', icon: <Box className="w-3.5 h-3.5" />, badge: totalCompared },
     { id: 'bento', label: 'Bento & Comparateur', shortLabel: 'Bento', icon: <LayoutGrid className="w-3.5 h-3.5" /> },
@@ -59,7 +58,7 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             <span className="text-[11px] text-slate-400 font-medium hidden sm:inline">Cohorte :</span>
             <button
               type="button"
-              onClick={() => setBirthYear(clampYear(birthYear - 1))}
+              onClick={() => setBirthYear(clampBirthYear(birthYear - 1))}
               className="p-1 rounded-full hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
               title="Année précédente (-1 an)"
             >
@@ -67,19 +66,19 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             </button>
             <input
               type="number"
-              min={1920}
-              max={2024}
+              min={MIN_BIRTH_YEAR}
+              max={MAX_BIRTH_YEAR}
               value={birthYear}
               onChange={(e) => {
                 const val = Number(e.target.value);
-                if (!Number.isNaN(val)) setBirthYear(clampYear(val));
+                if (!Number.isNaN(val)) setBirthYear(clampBirthYear(val));
               }}
               aria-label="Année de naissance globale"
               className="w-14 bg-transparent border border-white/10 focus:border-sky-400 rounded-md px-1 py-0.5 text-xs font-bold text-center text-sky-300 tabular-nums focus:outline-none"
             />
             <button
               type="button"
-              onClick={() => setBirthYear(clampYear(birthYear + 1))}
+              onClick={() => setBirthYear(clampBirthYear(birthYear + 1))}
               className="p-1 rounded-full hover:bg-white/10 text-slate-300 hover:text-white transition-colors"
               title="Année suivante (+1 an)"
             >
@@ -87,7 +86,7 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
             </button>
 
             <span className="text-[11px] text-slate-400 pl-1.5 border-l border-white/10 whitespace-nowrap tabular-nums">
-              <strong className="text-slate-200">{2026 - birthYear} ans</strong>
+              <strong className="text-slate-200">{ageFromBirthYear(birthYear)} ans</strong>
             </span>
 
             {/* Quick Decade Dropdown */}
@@ -98,17 +97,11 @@ export const ShinyHeader: React.FC<ShinyHeaderProps> = ({
               className="ml-1 bg-slate-900/90 hover:bg-slate-800 text-[11px] text-sky-300 font-medium rounded-full px-2 py-0.5 border border-white/10 cursor-pointer focus:outline-none"
               title="Accès rapide par décennie"
             >
-              <option value={1920}>1920s</option>
-              <option value={1930}>1930s</option>
-              <option value={1940}>1940s</option>
-              <option value={1950}>1950s</option>
-              <option value={1960}>1960s</option>
-              <option value={1970}>1970s</option>
-              <option value={1980}>1980s</option>
-              <option value={1990}>1990s</option>
-              <option value={2000}>2000s</option>
-              <option value={2010}>2010s</option>
-              <option value={2020}>2020s</option>
+              {BIRTH_DECADES.map((dec) => (
+                <option key={dec} value={dec}>
+                  {dec}s
+                </option>
+              ))}
             </select>
           </div>
         </div>

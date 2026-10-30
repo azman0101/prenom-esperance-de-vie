@@ -4,12 +4,16 @@
  * Source: Insee (Fichier des prénoms + Fichier des personnes décédées 1970-2024)
  */
 
+import { NAME_MODEL, REFERENCE_YEAR } from '../config';
+
+export type SocioProfile = 'diplomes' | 'populaire' | 'intermediaire' | 'traditionnel' | 'tendance';
+
 export interface NameRecord {
   name: string;
   gender: 'M' | 'F' | 'X';
   origin: string;
   peakDecade: number; // e.g., 1970
-  socioProfile: 'diplomes' | 'populaire' | 'intermediaire' | 'traditionnel' | 'tendance';
+  socioProfile: SocioProfile;
   socioDescription: string;
   mortalityHazardRatio: number; // 1.0 = average cohort baseline, 0.75 = lower mortality (longer life), 1.30 = higher mortality
   lifeExpectancyDelta: number; // e.g. +2.8 years or -2.4 years vs cohort average
@@ -55,8 +59,29 @@ export const INSER_COHORTS: Record<number, CohortLifeStats> = {
   2024: { birthYear: 2024, lifeExpMale: 80.1, lifeExpFemale: 85.7, lifeExpAvg: 82.9, survivalRateMale: 99.7, survivalRateFemale: 99.9, survivalRateAvg: 99.8, totalBirthsEst: 678000 },
 };
 
+const COHORT_YEARS = Object.keys(INSER_COHORTS).map(Number).sort((a, b) => a - b);
+
+/** Bornes des années de naissance proposées dans l'UI : dérivées des cohortes disponibles. */
+export const MIN_BIRTH_YEAR = COHORT_YEARS[0];
+export const MAX_BIRTH_YEAR = COHORT_YEARS[COHORT_YEARS.length - 1];
+
+/** Débuts de décennie couvrant [MIN_BIRTH_YEAR, MAX_BIRTH_YEAR] (ex. 1920, 1930, …, 2020). */
+export const BIRTH_DECADES: number[] = Array.from(
+  { length: Math.floor(MAX_BIRTH_YEAR / 10) - Math.floor(MIN_BIRTH_YEAR / 10) + 1 },
+  (_, i) => (Math.floor(MIN_BIRTH_YEAR / 10) + i) * 10
+);
+
+export function clampBirthYear(year: number): number {
+  return Math.min(MAX_BIRTH_YEAR, Math.max(MIN_BIRTH_YEAR, year));
+}
+
+/** Âge à l'année de référence (jamais négatif). */
+export function ageFromBirthYear(birthYear: number): number {
+  return Math.max(0, REFERENCE_YEAR - birthYear);
+}
+
 export function getCohortLifeStats(year: number): CohortLifeStats {
-  const years = Object.keys(INSER_COHORTS).map(Number).sort((a, b) => a - b);
+  const years = COHORT_YEARS;
   if (year <= years[0]) return INSER_COHORTS[years[0]];
   if (year >= years[years.length - 1]) return INSER_COHORTS[years[years.length - 1]];
 
@@ -733,7 +758,7 @@ export interface ComputedNameStats {
   survivalRateCohort: number; // Baseline cohort survival %
   adjustedSurvivalRate: number; // Adjusted by Coulmont hazard ratio
   mortalityHazardRatio: number;
-  socioProfile: 'diplomes' | 'populaire' | 'intermediaire' | 'traditionnel' | 'tendance';
+  socioProfile: SocioProfile;
   socioTitle: string;
   socioDescription: string;
   rankInBirthYear: number;
@@ -760,8 +785,28 @@ export function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
 }
 
-function estimateBirthsForYear(peakYear: number, year: number, maxBirths = 15000): number {
-  return Math.max(120, Math.round(maxBirths / (1 + Math.pow(Math.abs(year - peakYear) / 8, 2))));
+const SOCIO_LABELS: Record<SocioProfile, string> = {
+  diplomes: 'Classes Diplômées & Cadres Supérieurs',
+  populaire: 'Classes Populaires & Ouvrières',
+  intermediaire: 'Classes Moyennes & Intermédiaires',
+  traditionnel: 'Traditionnel Bourgeois & Historique',
+  tendance: 'Contemporain & Tendance',
+};
+
+function estimateBirthsForYear(
+  peakYear: number,
+  year: number,
+  maxBirths: number = NAME_MODEL.births.knownPeak
+): number {
+  const { spread, minBirths } = NAME_MODEL.births;
+  return Math.max(minBirths, Math.round(maxBirths / (1 + Math.pow(Math.abs(year - peakYear) / spread, 2))));
+}
+
+/** Survie de la cohorte ajustée par le hazard ratio : S^HR, bornée pour éviter 0 % / 100 %. */
+function adjustSurvivalRate(baselineSurvivalPercent: number, hazardRatio: number): number {
+  const { min, max } = NAME_MODEL.survivalBounds;
+  const adjusted = Math.min(max, Math.max(min, Math.pow(baselineSurvivalPercent / 100, hazardRatio)));
+  return Math.round(adjusted * 1000) / 10;
 }
 
 function computePopularityTrend(
@@ -783,8 +828,7 @@ export function computeNameStats(
   birthYear: number,
   forcedGender?: 'M' | 'F'
 ): ComputedNameStats {
-  const currentYear = 2026;
-  const currentAge = Math.max(0, currentYear - birthYear);
+  const currentAge = ageFromBirthYear(birthYear);
   const normalized = cleanName(rawName);
 
   const cohortStats = getCohortLifeStats(birthYear);
@@ -795,8 +839,7 @@ export function computeNameStats(
   let gender: 'M' | 'F' | 'X' = forcedGender || (existing ? existing.gender : 'M');
   if (!forcedGender && !existing) {
     // Basic heuristic if not in DB
-    const femaleEndings = ['e', 'a', 'ine', 'elle', 'ie', 'ette', 'ence'];
-    const isLikelyFemale = femaleEndings.some((ending) => normalized.endsWith(ending));
+    const isLikelyFemale = NAME_MODEL.femaleEndings.some((ending) => normalized.endsWith(ending));
     gender = isLikelyFemale ? 'F' : 'M';
   }
 
@@ -817,28 +860,21 @@ export function computeNameStats(
 
   if (existing) {
     const adjustedLifeExp = Math.round((baselineLifeExp + existing.lifeExpectancyDelta) * 10) / 10;
-    // Adjust survival rate based on hazard ratio: survival = (baselineSurvival / 100) ^ hazardRatio
-    const sBaselineDecimal = baselineSurvival / 100;
-    const adjustedSurvivalDecimal = Math.min(0.999, Math.max(0.001, Math.pow(sBaselineDecimal, existing.mortalityHazardRatio)));
-    const adjustedSurvivalRate = Math.round(adjustedSurvivalDecimal * 1000) / 10;
+    const adjustedSurvivalRate = adjustSurvivalRate(baselineSurvival, existing.mortalityHazardRatio);
 
     // Estimate deterministic rank in birth year
     const yearDist = Math.abs(birthYear - existing.peakDecade);
-    const rank = yearDist <= 5 ? Math.max(1, Math.round(yearDist) + 1) : Math.min(95, Math.floor(yearDist * 2.5) + 6);
-    const birthsEstimated = estimateBirthsForYear(existing.peakDecade, birthYear, 15000);
-    const previousYearBirthsEstimated = estimateBirthsForYear(existing.peakDecade, birthYear - 1, 15000);
+    const { nearYears, farSlope, farOffset, farMax } = NAME_MODEL.knownRank;
+    const rank =
+      yearDist <= nearYears
+        ? Math.max(1, Math.round(yearDist) + 1)
+        : Math.min(farMax, Math.floor(yearDist * farSlope) + farOffset);
+    const birthsEstimated = estimateBirthsForYear(existing.peakDecade, birthYear);
+    const previousYearBirthsEstimated = estimateBirthsForYear(existing.peakDecade, birthYear - 1);
     const { popularityTrend, popularityDeltaPercent } = computePopularityTrend(
       birthsEstimated,
       previousYearBirthsEstimated
     );
-
-    const socioLabels: Record<string, string> = {
-      diplomes: 'Classes Diplômées & Cadres Supérieurs',
-      populaire: 'Classes Populaires & Ouvrières',
-      intermediaire: 'Classes Moyennes & Intermédiaires',
-      traditionnel: 'Traditionnel Bourgeois & Historique',
-      tendance: 'Contemporain & Tendance',
-    };
 
     return {
       queryName: capitalize(rawName),
@@ -853,7 +889,7 @@ export function computeNameStats(
       adjustedSurvivalRate,
       mortalityHazardRatio: existing.mortalityHazardRatio,
       socioProfile: existing.socioProfile,
-      socioTitle: socioLabels[existing.socioProfile] || 'Moyenne Nationale',
+      socioTitle: SOCIO_LABELS[existing.socioProfile] || 'Moyenne Nationale',
       socioDescription: existing.socioDescription,
       rankInBirthYear: rank,
       birthsEstimated,
@@ -874,28 +910,27 @@ export function computeNameStats(
     hash = (hash << 5) - hash + normalized.charCodeAt(i);
     hash |= 0;
   }
+  const custom = NAME_MODEL.custom;
   const factor = (Math.abs(hash) % 100) / 100; // 0.0 to 1.0
-  const delta = Math.round((factor * 5 - 2.5) * 10) / 10; // -2.5 to +2.5 years
-  const hazardRatio = Math.round((1.0 - delta * 0.1) * 100) / 100;
+  const delta = Math.round((factor * custom.lifeExpDeltaSpan - custom.lifeExpDeltaSpan / 2) * 10) / 10;
+  const hazardRatio = Math.round((1.0 - delta * custom.hazardSlope) * 100) / 100;
 
-  let profile: 'diplomes' | 'populaire' | 'intermediaire' | 'traditionnel' | 'tendance' = 'intermediaire';
+  let profile: SocioProfile = 'intermediaire';
   let desc = 'Prénom modélisé selon les tables démographiques Insee et le gradient socio-économique standard.';
 
-  if (delta > 1.2) {
+  if (delta > custom.profileThresholdYears) {
     profile = 'diplomes';
     desc = 'Profil statistique associé aux catégories sociales supérieures et à une longévité supérieure à la moyenne.';
-  } else if (delta < -1.2) {
+  } else if (delta < -custom.profileThresholdYears) {
     profile = 'populaire';
     desc = 'Profil statistique représentatif des catégories populaires avec une surmortalité relative modérée selon l’étude Coulmont.';
   }
 
   const adjustedLifeExp = Math.round((baselineLifeExp + delta) * 10) / 10;
-  const sBaselineDecimal = baselineSurvival / 100;
-  const adjustedSurvivalDecimal = Math.min(0.999, Math.max(0.001, Math.pow(sBaselineDecimal, hazardRatio)));
-  const adjustedSurvivalRate = Math.round(adjustedSurvivalDecimal * 1000) / 10;
+  const adjustedSurvivalRate = adjustSurvivalRate(baselineSurvival, hazardRatio);
 
-  const customPeakYear = 1945 + (Math.abs(hash) % 65);
-  const customMaxBirths = Math.round(3200 + factor * 6800);
+  const customPeakYear = custom.peakYear.base + (Math.abs(hash) % custom.peakYear.span);
+  const customMaxBirths = Math.round(custom.maxBirths.base + factor * custom.maxBirths.span);
   const birthsEstimated = estimateBirthsForYear(customPeakYear, birthYear, customMaxBirths);
   const previousYearBirthsEstimated = estimateBirthsForYear(customPeakYear, birthYear - 1, customMaxBirths);
   const { popularityTrend, popularityDeltaPercent } = computePopularityTrend(
@@ -903,10 +938,12 @@ export function computeNameStats(
     previousYearBirthsEstimated
   );
   const yearDist = Math.abs(birthYear - customPeakYear);
-  const customRank = Math.min(98, Math.max(8, Math.floor(yearDist * 2.2) + 10));
+  const customRank = Math.min(
+    custom.rank.max,
+    Math.max(custom.rank.min, Math.floor(yearDist * custom.rank.slope) + custom.rank.offset)
+  );
 
-  const colorPalettes = ['#3b82f6', '#10b981', '#8b5cf6', '#ec4899', '#f59e0b', '#06b6d4'];
-  const chosenColor = colorPalettes[Math.abs(hash) % colorPalettes.length];
+  const chosenColor = custom.palette[Math.abs(hash) % custom.palette.length];
 
   return {
     queryName: capitalize(rawName),
@@ -932,7 +969,7 @@ export function computeNameStats(
       { name: `${capitalize(rawName)} Contemporain`, birthYear: birthYear - 5, role: 'Figure notable', country: 'France' },
     ],
     colorHex: chosenColor,
-    accentHex: '#cbd5e1',
+    accentHex: custom.accentHex,
     isCustomEstimated: true,
   };
 }

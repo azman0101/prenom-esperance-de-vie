@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { ComputedNameStats } from '../data/demographics';
+import { REFERENCE_YEAR, SCENE_RENDER } from '../config';
 
 interface ThreeDemographicSceneProps {
   names: ComputedNameStats[];
@@ -88,7 +89,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
       alpha: false,
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 1.25));
+    renderer.setPixelRatio(isSoftwareGl ? SCENE_RENDER.softwarePixelRatio : Math.min(window.devicePixelRatio, SCENE_RENDER.maxPixelRatio));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.25;
@@ -267,8 +268,7 @@ export const ThreeDemographicScene: React.FC<ThreeDemographicSceneProps> = ({
     let isLoopRunning = false;
     let activeFramesRemaining = 45;
     let lastFrameTime = 0;
-    const fpsLimit = 30;
-    const frameInterval = 1000 / fpsLimit;
+    const frameInterval = 1000 / SCENE_RENDER.fpsLimit;
     const clock = new THREE.Clock();
 
     const wakeRenderLoop = (frames = 35) => {
@@ -877,7 +877,7 @@ function createMonolithGroup(item: ComputedNameStats, index: number, isSoftwareG
   // Survival indicator
   lctx.font = '28px sans-serif';
   lctx.fillStyle = item.adjustedSurvivalRate >= 90 ? '#4ade80' : item.adjustedSurvivalRate >= 70 ? '#fbbf24' : '#f87171';
-  lctx.fillText(`Survie en 2026 : ${item.adjustedSurvivalRate}%`, 256, 168);
+  lctx.fillText(`Survie en ${REFERENCE_YEAR} : ${item.adjustedSurvivalRate}%`, 256, 168);
 
   // Popularity trend pill inside 3D billboard
   const pillBg =
